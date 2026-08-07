@@ -8,6 +8,10 @@ change behavior.
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-08-07
+
+Initial public release.
+
 ### Added
 
 - Task → orchestrator → worker agent model on a dedicated tmux server, with
