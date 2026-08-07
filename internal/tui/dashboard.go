@@ -17,13 +17,29 @@ import (
 )
 
 type dashModel struct {
-	cursor int
+	cursor     int
+	confirming bool // pending quit-task confirmation
 }
 
 func (a App) updateDashboard(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	nTasks := len(a.snap.tasks)
 	total := nTasks + len(a.snap.external)
+
+	if a.dash.confirming {
+		a.dash.confirming = false
+		if msg.String() == "y" && a.dash.cursor < nTasks {
+			mgr, id := a.mgr, a.snap.tasks[a.dash.cursor].ID
+			return a, func() tea.Msg { return actionErrMsg{mgr.Archive(id)} }
+		}
+		return a, nil
+	}
+
 	switch msg.String() {
+	case "x":
+		if a.dash.cursor < nTasks {
+			a.dash.confirming = true
+		}
+		return a, nil
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "up", "k":
@@ -173,6 +189,9 @@ func (a App) viewDashboard(width int) string {
 		if needsYou > 0 {
 			attention = sBadgeHot.Render(fmt.Sprintf("%d need you", needsYou))
 		}
+		if t.Status == "done" {
+			attention = sBadgeDone.Render("✓ ready for review") + " " + attention
+		}
 		line := fmt.Sprintf("  #%-3d %-30s %-16s %d total · %d %s · %d ✓     $%-8.2f %s",
 			t.ID, truncate(t.Title, 30), truncate(t.ProjectName, 16),
 			len(agents), working, spinnerFrames[a.ticks%len(spinnerFrames)], done, cost, attention)
@@ -202,6 +221,12 @@ func (a App) viewDashboard(width int) string {
 			}
 			row(len(a.snap.tasks)+i, line, false)
 		}
+	}
+	if a.dash.confirming && a.dash.cursor < len(a.snap.tasks) {
+		t := a.snap.tasks[a.dash.cursor]
+		b.WriteString("\n " + sBadgeHot.Render(fmt.Sprintf("quit task #%d %q?", t.ID, truncate(t.Title, 30))) +
+			sNormal.Render(" kills its agents, removes worktrees, keeps branches — ") +
+			sKeyChip.Render("y") + sNormal.Render(" confirm, any other key cancels") + "\n")
 	}
 	return b.String()
 }

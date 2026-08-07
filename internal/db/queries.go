@@ -71,6 +71,14 @@ func (s *Store) SetAgentTmux(id int64, windowID, paneID string) error {
 	return err
 }
 
+// SetTaskDone marks a task ready for review with the orchestrator's summary.
+func (s *Store) SetTaskDone(taskID int64, summary string) error {
+	_, err := s.db.Exec(
+		`UPDATE tasks SET status = 'done', summary = ? WHERE id = ? AND status = 'active'`,
+		summary, taskID)
+	return err
+}
+
 func (s *Store) ArchiveTask(taskID int64) error {
 	_, err := s.db.Exec(
 		`UPDATE tasks SET status = 'archived',
@@ -78,12 +86,12 @@ func (s *Store) ArchiveTask(taskID int64) error {
 	return err
 }
 
-const taskCols = `t.id, t.project_id, t.title, t.prompt, t.status, t.branch,
+const taskCols = `t.id, t.project_id, t.title, t.prompt, t.status, t.branch, t.summary,
 	t.tmux_session_id, t.tmux_session_name, t.created_at, p.name, p.path`
 
 func scanTask(scan func(...any) error) (Task, error) {
 	var t Task
-	err := scan(&t.ID, &t.ProjectID, &t.Title, &t.Prompt, &t.Status, &t.Branch,
+	err := scan(&t.ID, &t.ProjectID, &t.Title, &t.Prompt, &t.Status, &t.Branch, &t.Summary,
 		&t.TmuxSessionID, &t.TmuxSessionName, &t.CreatedAt, &t.ProjectName, &t.ProjectPath)
 	return t, err
 }
@@ -102,7 +110,7 @@ func (s *Store) GetTask(id int64) (Task, error) {
 func (s *Store) ListTasks(includeArchived bool) ([]Task, error) {
 	q := `SELECT ` + taskCols + ` FROM tasks t JOIN projects p ON p.id = t.project_id`
 	if !includeArchived {
-		q += ` WHERE t.status = 'active'`
+		q += ` WHERE t.status IN ('active','done')`
 	}
 	q += ` ORDER BY t.id DESC`
 	rows, err := s.db.Query(q)
@@ -195,7 +203,7 @@ func (s *Store) ListAgents(taskID int64) ([]Agent, error) {
 func (s *Store) ListAllActiveAgents() ([]Agent, error) {
 	rows, err := s.db.Query(
 		`SELECT ` + agentCols + ` FROM agents
-		 WHERE task_id IN (SELECT id FROM tasks WHERE status = 'active') ORDER BY id`)
+		 WHERE task_id IN (SELECT id FROM tasks WHERE status IN ('active','done')) ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

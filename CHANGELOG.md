@@ -8,6 +8,16 @@ change behavior.
 
 ## [Unreleased]
 
+### Added
+
+- Task completion lifecycle: the orchestrator reports `workflow task done
+  --summary`, the task turns "ready for review" with a green badge on the
+  dashboard and a review banner (branch + summary + next steps) in the task
+  view.
+- Desktop notifications (macOS/Linux) on the transitions a detached human
+  cares about: task ready for review, agent needs you, agent error/death.
+  Edge-triggered — states never re-notify.
+
 ## [0.0.1] - 2026-08-07
 
 Initial public release.

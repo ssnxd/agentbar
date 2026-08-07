@@ -29,7 +29,8 @@ type Task struct {
 	ProjectID       int64
 	Title           string
 	Prompt          string
-	Status          string // active | archived
+	Status          string // active | done | archived
+	Summary         string
 	Branch          string
 	TmuxSessionID   string
 	TmuxSessionName string

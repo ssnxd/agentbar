@@ -37,6 +37,8 @@ func main() {
 		cli.Agent(args[1:])
 	case "msg":
 		cli.Msg(args[1:])
+	case "task":
+		cli.Task(args[1:])
 	case "new":
 		cli.NewTask(args[1:])
 	case "doctor":
@@ -54,8 +56,12 @@ func main() {
 const usage = `workflow — manage Claude Code agent fleets on tmux
 
 usage:
-  workflow              launch the TUI
-  workflow doctor       check tmux/claude/git prerequisites
-  workflow agent ...    (used by agents) spawn | list | done
-  workflow msg ...      (used by agents) send | read
+  workflow                      launch the TUI
+  workflow new --repo ... --title ... --prompt ...
+  workflow task quit [--yes] <id>   kill a task's agents, keep its branches
+  workflow doctor               check tmux/claude/git prerequisites
+  workflow version              print the version
+  workflow agent ...            (used by agents) spawn | list | done
+  workflow msg ...              (used by agents) send | read
+  workflow task done ...        (used by the orchestrator)
 `

@@ -16,6 +16,7 @@ import (
 	"github.com/ssnxd/workflow/internal/external"
 	"github.com/ssnxd/workflow/internal/gitx"
 	"github.com/ssnxd/workflow/internal/manager"
+	"github.com/ssnxd/workflow/internal/notify"
 	"github.com/ssnxd/workflow/internal/tmux"
 )
 
@@ -178,6 +179,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s.err != nil {
 			a.status = s.err.Error()
 		}
+		a.notifyTransitions(s)
 		// Keep stats/preview if this refresh didn't compute them.
 		if s.stats == nil {
 			s.stats = a.snap.stats
@@ -324,6 +326,45 @@ func (a App) View() tea.View {
 	v.AltScreen = true
 	v.WindowTitle = "workflow"
 	return v
+}
+
+// notifyTransitions fires a desktop notification on the transitions a
+// detached human cares about: a task turning ready for review, an agent
+// starting to need attention. Compared against the previous snapshot so
+// only edges notify, never states — and never on the first load.
+func (a App) notifyTransitions(next snapshot) {
+	if a.snap.agents == nil {
+		return
+	}
+	prevTask := make(map[int64]string, len(a.snap.tasks))
+	for _, t := range a.snap.tasks {
+		prevTask[t.ID] = t.Status
+	}
+	for _, t := range next.tasks {
+		if t.Status == "done" && prevTask[t.ID] == "active" {
+			notify.Send("workflow", fmt.Sprintf("task #%d %q is ready for review", t.ID, t.Title))
+		}
+	}
+	prevAgent := make(map[int64]string)
+	for _, agents := range a.snap.agents {
+		for _, ag := range agents {
+			prevAgent[ag.ID] = ag.Status
+		}
+	}
+	for taskID, agents := range next.agents {
+		for _, ag := range agents {
+			was, known := prevAgent[ag.ID]
+			if !known || was == ag.Status {
+				continue
+			}
+			switch ag.Status {
+			case db.StatusNeedsYou:
+				notify.Send("workflow", fmt.Sprintf("%s (task #%d) needs you", ag.Name, taskID))
+			case db.StatusError, db.StatusDead:
+				notify.Send("workflow", fmt.Sprintf("%s (task #%d) %s", ag.Name, taskID, ag.Status))
+			}
+		}
+	}
 }
 
 // dashSummary is the header's right side: fleet-wide counts.

@@ -31,11 +31,12 @@ var (
 	sPurple   = lipgloss.NewStyle().Foreground(cPurple)
 	sSelected = lipgloss.NewStyle().Bold(true).Foreground(cFg).Background(cSel)
 
-	sAppTitle = lipgloss.NewStyle().Bold(true).Foreground(cBg).Background(cBlue).Padding(0, 1)
-	sCrumb    = lipgloss.NewStyle().Foreground(cCyan).Background(cBgAlt).Padding(0, 1)
-	sHeadRow  = lipgloss.NewStyle().Foreground(cMuted).Bold(true)
-	sBadgeHot = lipgloss.NewStyle().Bold(true).Foreground(cBg).Background(cYellow).Padding(0, 1)
-	sBadgeExt = lipgloss.NewStyle().Foreground(cBg).Background(cMuted).Padding(0, 1)
+	sAppTitle  = lipgloss.NewStyle().Bold(true).Foreground(cBg).Background(cBlue).Padding(0, 1)
+	sCrumb     = lipgloss.NewStyle().Foreground(cCyan).Background(cBgAlt).Padding(0, 1)
+	sHeadRow   = lipgloss.NewStyle().Foreground(cMuted).Bold(true)
+	sBadgeHot  = lipgloss.NewStyle().Bold(true).Foreground(cBg).Background(cYellow).Padding(0, 1)
+	sBadgeExt  = lipgloss.NewStyle().Foreground(cBg).Background(cMuted).Padding(0, 1)
+	sBadgeDone = lipgloss.NewStyle().Bold(true).Foreground(cBg).Background(cGreen).Padding(0, 1)
 
 	sKeyChip   = lipgloss.NewStyle().Bold(true).Foreground(cCyan)
 	sKeyLabel  = lipgloss.NewStyle().Foreground(cMuted)

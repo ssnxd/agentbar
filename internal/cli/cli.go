@@ -262,6 +262,100 @@ func Agent(args []string) {
 	}
 }
 
+// Task implements task lifecycle commands: `done` (orchestrator-facing
+// completion report) and `quit` (human-facing teardown with confirmation).
+func Task(args []string) {
+	if len(args) == 0 {
+		fatal(fmt.Errorf("usage: workflow task done|quit"))
+	}
+	if args[0] == "quit" {
+		taskQuit(args[1:])
+		return
+	}
+	if args[0] != "done" {
+		fatal(fmt.Errorf("usage: workflow task done --summary \"...\" | workflow task quit <id>"))
+	}
+	fs := flag.NewFlagSet("task done", flag.ExitOnError)
+	summary := fs.String("summary", "", "what shipped and how it was verified")
+	_ = fs.Parse(args[1:])
+	if *summary == "" {
+		fatal(fmt.Errorf("task done requires --summary"))
+	}
+	m, err := openManager()
+	if err != nil {
+		fatal(err)
+	}
+	defer m.Store.Close()
+	self, err := envAgent(m)
+	if err != nil {
+		fatal(err)
+	}
+	if self.Role != db.RoleOrchestrator {
+		fatal(fmt.Errorf("only the orchestrator reports task completion"))
+	}
+	if err := m.Store.SetTaskDone(self.TaskID, *summary); err != nil {
+		fatal(err)
+	}
+	_ = m.Store.SetAgentStatus(self.ID, db.StatusDone)
+	_ = m.Store.SetAgentSummary(self.ID, *summary)
+	fmt.Printf("task #%d marked ready for review. The human reviews branch via the TUI.\n", self.TaskID)
+}
+
+// taskQuit tears a task down from the command line, with confirmation:
+// kills its tmux session (all agents), removes worktrees, keeps branches.
+func taskQuit(args []string) {
+	fs := flag.NewFlagSet("task quit", flag.ExitOnError)
+	yes := fs.Bool("yes", false, "skip the confirmation prompt")
+	_ = fs.Parse(args)
+	if fs.NArg() != 1 {
+		fatal(fmt.Errorf("usage: workflow task quit [--yes] <task-id>"))
+	}
+	id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
+	if err != nil {
+		fatal(fmt.Errorf("bad task id %q", fs.Arg(0)))
+	}
+	m, err := openManager()
+	if err != nil {
+		fatal(err)
+	}
+	defer m.Store.Close()
+	task, err := m.Store.GetTask(id)
+	if err != nil {
+		fatal(err)
+	}
+	if task.Status == "archived" {
+		fmt.Printf("task #%d is already archived\n", id)
+		return
+	}
+	agents, err := m.Store.ListAgents(id)
+	if err != nil {
+		fatal(err)
+	}
+	live := 0
+	for _, a := range agents {
+		if a.Status != db.StatusEnded && a.Status != db.StatusDead {
+			live++
+		}
+	}
+
+	fmt.Printf("task #%d %q (%s)\n", task.ID, task.Title, task.ProjectName)
+	fmt.Printf("  kills %d agent session(s) (%d live), removes worktrees, keeps branch %s\n",
+		len(agents), live, task.Branch)
+	if !*yes {
+		fmt.Print("proceed? [y/N] ")
+		var answer string
+		_, _ = fmt.Scanln(&answer)
+		if answer != "y" && answer != "Y" && answer != "yes" {
+			fmt.Println("aborted")
+			return
+		}
+	}
+	if err := m.Archive(id); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("task #%d archived · branch %s kept for review\n", id, task.Branch)
+}
+
 // Msg implements `workflow msg send|read` for use by agents.
 func Msg(args []string) {
 	if len(args) == 0 {

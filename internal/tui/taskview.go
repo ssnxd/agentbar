@@ -95,6 +95,14 @@ func (a App) viewTask(width, height int) string {
 	agents := a.snap.agents[task.ID]
 
 	var b strings.Builder
+	if task.Status == "done" {
+		b.WriteString("\n " + sBadgeDone.Render("✓ ready for review") + " " +
+			sNormal.Render("review branch ") + sPurple.Render(task.Branch) +
+			sNormal.Render(" · then ") + sKeyChip.Render("x") + sNormal.Render(" archives (keeps branches)") + "\n")
+		if task.Summary != "" {
+			b.WriteString(" " + sDim.Render(truncate(task.Summary, max(20, (width-4)*2))) + "\n")
+		}
+	}
 	b.WriteString("\n " + sKeyGroup.Render("agents") + "\n")
 	b.WriteString(" " + sHeadRow.Render(fmt.Sprintf(" %-2s %-16s %-8s %-14s %-9s %-6s %s",
 		"", "agent", "model", "status", "cost", "ctx", "committed diff")) + "\n")

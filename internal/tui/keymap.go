@@ -37,12 +37,19 @@ func (a App) bindings() []binding {
 func (a App) dashBindings() []binding {
 	nTasks := len(a.snap.tasks)
 	onTask := a.dash.cursor < nTasks
+	if a.dash.confirming {
+		return []binding{
+			{"y", "confirm quit task", gAction, true},
+			{"any", "cancel", gAction, true},
+		}
+	}
 	var ext *bool
 	if !onTask && a.dash.cursor < nTasks+len(a.snap.external) {
 		v := a.snap.external[a.dash.cursor-nTasks].InTmux
 		ext = &v
 	}
 	return []binding{
+		{"x", "quit task", gAction, onTask},
 		{"j/k", "move", gNav, nTasks+len(a.snap.external) > 1},
 		{"enter", "open task", gNav, onTask},
 		{"enter", "jump to session", gNav, ext != nil && *ext},

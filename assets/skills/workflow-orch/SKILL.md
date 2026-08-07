@@ -48,4 +48,12 @@ When a worker reports done:
 3. Run the repository's tests after each merge.
 4. On a conflict you cannot resolve confidently, or failing tests you cannot explain: stop and report to the human in your final message. Do not force it.
 
-When all workers are merged and tests pass, summarize the task result in a final message: what changed, how it was verified, what needs human review. The human reviews the task branch.
+## 5. Finish
+
+When all workers are merged and tests pass, report completion:
+
+```bash
+workflow task done --summary "One paragraph: what shipped, how it was verified, anything the human should look at first."
+```
+
+This marks the task ready for review in the manager. Then state the same summary in your final message and stop. The human reviews the task branch. Do not archive, delete branches, or clean up worktrees — the manager owns teardown.
