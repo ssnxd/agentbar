@@ -47,7 +47,10 @@ var (
 )
 
 // spinnerFrames animate "working" agents, driven by the app tick.
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+// Block-element quadrants: part of the same Unicode block as the banner
+// art, so any font that renders the app at all renders these (braille and
+// geometric shapes both have coverage gaps in common monospace fonts).
+var spinnerFrames = []string{"▘", "▝", "▗", "▖"}
 
 type statusLook struct {
 	icon  string

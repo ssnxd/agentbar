@@ -60,6 +60,9 @@ var claudeCmdRe = regexp.MustCompile(`^(?:\S*/)?claude(?:\s|$)`)
 // skipped. Errors degrade to an empty list — this is a best-effort widget,
 // never a reason to break the TUI.
 func Discover(managedRoot string) []Session {
+	if os.Getenv("WORKFLOW_NO_EXTERNAL") != "" {
+		return nil // privacy switch: demos, screen shares
+	}
 	procs := listClaudeProcs()
 	if len(procs) == 0 {
 		return nil

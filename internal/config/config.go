@@ -75,11 +75,14 @@ type Paths struct {
 }
 
 func DefaultPaths() (Paths, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Paths{}, err
+	data := os.Getenv("WORKFLOW_DATA_DIR") // isolation for tests and demos
+	if data == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return Paths{}, err
+		}
+		data = filepath.Join(home, ".local", "share", "workflow")
 	}
-	data := filepath.Join(home, ".local", "share", "workflow")
 	return Paths{
 		DataDir:      data,
 		DBPath:       filepath.Join(data, "workflow.db"),

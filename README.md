@@ -2,6 +2,8 @@
 
 A terminal UI that manages fleets of Claude Code agents on top of tmux.
 
+![workflow dashboard](docs/dashboard.png)
+
 You give it a **task**: a git repository plus a prompt. The task starts an
 **orchestrator** — a real, interactive Claude Code session — which plans the
 work, picks models, and spawns **worker** agents. Every agent runs in its own
