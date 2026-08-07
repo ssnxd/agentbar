@@ -2,6 +2,8 @@ module github.com/ssnxd/workflow
 
 go 1.25.7
 
+toolchain go1.26.1
+
 require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8

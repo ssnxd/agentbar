@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
 project_name: workflow
@@ -29,15 +30,13 @@ checksum:
   name_template: checksums.txt
 
 changelog:
+  use: github
   sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
 
 release:
-  draft: false
+  github:
+    owner: ssnxd
+    name: workflow
   footer: |
     ---
     Requires tmux >= 3.2 and the Claude Code CLI in PATH. Run `workflow doctor` after install.
