@@ -29,6 +29,8 @@ func (a App) bindings() []binding {
 		return a.taskBindings()
 	case screenNewTask:
 		return a.formBindings()
+	case screenDiff:
+		return a.diffBindings()
 	default:
 		return a.dashBindings()
 	}
@@ -65,9 +67,9 @@ func (a App) taskBindings() []binding {
 	if a.taskV.cursor < len(agents) {
 		sel = &agents[a.taskV.cursor]
 	}
-	if a.taskV.confirming {
+	if a.taskV.confirm != "" {
 		return []binding{
-			{"y", "confirm archive", gAction, true},
+			{"y", "confirm " + a.taskV.confirm, gAction, true},
 			{"any", "cancel", gAction, true},
 		}
 	}
@@ -76,11 +78,40 @@ func (a App) taskBindings() []binding {
 	return []binding{
 		{"j/k", "select agent", gNav, len(agents) > 1},
 		{"enter", "attach (ctrl-q detaches)", gAction, sel != nil && sel.TmuxWindowID != ""},
+		{"d", "review diff", gAction, true},
+		{"m", "land (merge)", gAction, true},
+		{"S", "land (squash)", gAction, true},
+		{"p", "create PR", gAction, true},
 		{"r", "recover agent", gAction, recoverable},
+		{"R", "recover all dead", gAction, anyDead(agents)},
 		{"x", "archive task", gAction, true},
 		{"esc", "back", gNav, true},
 		{"?", "keys", gApp, true},
 		{"q", "quit", gApp, true},
+	}
+}
+
+func anyDead(agents []db.Agent) bool {
+	for _, ag := range agents {
+		if ag.Status == db.StatusDead || ag.Status == db.StatusError {
+			return true
+		}
+	}
+	return false
+}
+
+func (a App) diffBindings() []binding {
+	if a.diff.commenting {
+		return []binding{
+			{"enter", "send comment", gAction, true},
+			{"esc", "cancel", gNav, true},
+		}
+	}
+	return []binding{
+		{"j/k d/u g/G", "scroll", gNav, true},
+		{"[/]", "prev/next file", gNav, len(a.diff.fileAt) > 1},
+		{"c", "comment → orchestrator", gAction, true},
+		{"esc", "back", gNav, true},
 	}
 }
 

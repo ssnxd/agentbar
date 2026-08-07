@@ -248,6 +248,34 @@ func (s *Store) SetAgentTelemetry(id int64, cost, ctxPct float64, added, removed
 	return err
 }
 
+// TaskCost sums all agent spend for a task.
+func (s *Store) TaskCost(taskID int64) (float64, error) {
+	var total float64
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(cost_usd), 0) FROM agents WHERE task_id = ?`, taskID).Scan(&total)
+	return total, err
+}
+
+// CountLiveWorkers counts workers still occupying a slot (anything not
+// terminally finished).
+func (s *Store) CountLiveWorkers(taskID int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM agents WHERE task_id = ? AND role = 'worker'
+		   AND status IN ('starting','working','idle','needs_you')`, taskID).Scan(&n)
+	return n, err
+}
+
+// HasTaskEvent reports whether an event was already recorded for any agent
+// of a task (used to fire one-shot alerts exactly once).
+func (s *Store) HasTaskEvent(taskID int64, event string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM events WHERE event = ?
+		   AND agent_id IN (SELECT id FROM agents WHERE task_id = ?)`, event, taskID).Scan(&n)
+	return n > 0, err
+}
+
 // --- events / messages ---
 
 func (s *Store) InsertEvent(agentID int64, sessionID, event, detail string) error {

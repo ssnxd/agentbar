@@ -26,6 +26,7 @@ const (
 	screenDashboard screen = iota
 	screenTask
 	screenNewTask
+	screenDiff
 )
 
 // snapshot is one consistent read of the world, produced off the UI thread
@@ -49,6 +50,10 @@ type (
 		err    error
 	}
 	actionErrMsg struct{ err error }
+	landedMsg    struct {
+		what string
+		err  error
+	}
 )
 
 type App struct {
@@ -57,6 +62,7 @@ type App struct {
 	scr      screen
 	dash     dashModel
 	taskV    taskModel
+	diff     diffModel
 	form     formModel
 	snap     snapshot
 	width    int
@@ -216,6 +222,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.refreshCmd()
 
+	case diffLoadedMsg:
+		return a.updateDiffLoaded(msg)
+
+	case landedMsg:
+		a.taskV.busy = ""
+		if msg.err != nil {
+			a.status = msg.err.Error()
+		} else {
+			a.status = "✓ " + msg.what
+			notify.Send("workflow", msg.what)
+		}
+		return a, a.refreshCmd()
+
 	case reposScannedMsg:
 		a.form.all = msg
 		a.form.scanned = true
@@ -268,6 +287,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateTask(msg)
 		case screenNewTask:
 			return a.updateForm(msg)
+		case screenDiff:
+			return a.updateDiff(msg)
 		}
 	}
 
@@ -302,6 +323,9 @@ func (a App) View() tea.View {
 	case screenNewTask:
 		content = a.form.view()
 		crumb = "new task"
+	case screenDiff:
+		content = a.viewDiff(w, h)
+		crumb = fmt.Sprintf("diff · task #%d", a.diff.taskID)
 	}
 
 	head := headerBar(w, crumb, right)

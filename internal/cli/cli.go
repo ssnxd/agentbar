@@ -20,6 +20,7 @@ import (
 	"github.com/ssnxd/workflow/internal/hooks"
 	"github.com/ssnxd/workflow/internal/manager"
 	"github.com/ssnxd/workflow/internal/msg"
+	"github.com/ssnxd/workflow/internal/notify"
 )
 
 func openManager() (*manager.Manager, error) {
@@ -120,9 +121,34 @@ func Statusline() {
 	if err == nil {
 		_ = m.Store.SetAgentTelemetry(agent.ID, in.Cost.TotalCostUSD,
 			in.ContextWindow.UsedPercentage, in.Cost.TotalLinesAdded, in.Cost.TotalLinesRemoved)
+		checkBudget(m, agent)
 	}
 	fmt.Printf("%s · $%.2f · ctx %.0f%% · workflow:%s\n",
 		in.Model.DisplayName, in.Cost.TotalCostUSD, in.ContextWindow.UsedPercentage, agent.Name)
+}
+
+// checkBudget fires exactly once per task when total spend crosses the
+// configured cap: an event (drives the TUI banner + notification), plus a
+// wrap-up message into the orchestrator's inbox. Warn-and-steer, not a hard
+// kill — killing a mid-merge orchestrator would cost more than it saves.
+func checkBudget(m *manager.Manager, agent db.Agent) {
+	cap := m.Cfg.MaxTaskBudgetUSD
+	if cap <= 0 {
+		return
+	}
+	total, err := m.Store.TaskCost(agent.TaskID)
+	if err != nil || total <= cap {
+		return
+	}
+	already, err := m.Store.HasTaskEvent(agent.TaskID, "budget_exceeded")
+	if err != nil || already {
+		return
+	}
+	detail := fmt.Sprintf("$%.2f spent, cap $%.2f", total, cap)
+	_ = m.Store.InsertEvent(agent.ID, agent.ClaudeSessionID, "budget_exceeded", detail)
+	notify.Send("workflow", fmt.Sprintf("task #%d over budget: %s", agent.TaskID, detail))
+	_ = m.SendToAgent(agent.TaskID, "orchestrator", "manager",
+		fmt.Sprintf("BUDGET: this task has spent %s. Wrap up now: stop spawning workers, merge what is complete, and run `workflow task done`.", detail))
 }
 
 // RunAgent is the tmux pane command. It execs claude, replacing itself, so

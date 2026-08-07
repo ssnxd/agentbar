@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ssnxd/workflow/internal/db"
 	"github.com/ssnxd/workflow/internal/gitx"
+	"github.com/ssnxd/workflow/internal/msg"
 	"github.com/ssnxd/workflow/internal/tmux"
 )
 
@@ -52,9 +54,49 @@ func (m *Manager) Reconcile() error {
 			}
 			_ = m.Store.InsertEvent(a.ID, a.ClaudeSessionID, "pane_died",
 				"exit status "+p.DeadStatus)
+		case a.Status == db.StatusIdle:
+			// Mail sweep: delivery must not depend on catching a single
+			// Stop event. Any idle agent with pending mail gets re-nudged,
+			// rate-limited per agent.
+			m.sweepInbox(a)
 		}
 	}
 	return nil
+}
+
+func (m *Manager) sweepInbox(a db.Agent) {
+	inbox := m.Paths.InboxPath(a.TaskID, a.Name)
+	if msg.Pending(inbox) == 0 {
+		return
+	}
+	m.nudgeMu.Lock()
+	last, seen := m.lastNudge[a.ID]
+	if seen && time.Since(last) < 90*time.Second {
+		m.nudgeMu.Unlock()
+		return
+	}
+	m.lastNudge[a.ID] = time.Now()
+	m.nudgeMu.Unlock()
+	_ = m.Nudge(a)
+}
+
+// RecoverAllDead restarts every dead agent of a task. Used after reboots.
+func (m *Manager) RecoverAllDead(taskID int64) (int, error) {
+	agents, err := m.Store.ListAgents(taskID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, a := range agents {
+		if a.Status != db.StatusDead && a.Status != db.StatusError {
+			continue
+		}
+		if err := m.Recover(a.ID); err != nil {
+			return n, fmt.Errorf("recover %s: %w", a.Name, err)
+		}
+		n++
+	}
+	return n, nil
 }
 
 // Recover restarts a dead agent. Claude Code's own persistence does the heavy
@@ -162,4 +204,22 @@ func (m *Manager) Archive(taskID int64) error {
 // path in the whole app.
 func (m *Manager) Nudge(a db.Agent) error {
 	return m.Tmux.SendText(a.TmuxPaneID, "You have mail. Run `workflow msg read` and act on it.")
+}
+
+// SendToAgent delivers a message from the human/manager to an agent's inbox
+// and nudges it if it is idle.
+func (m *Manager) SendToAgent(taskID int64, agentName, from, body string) error {
+	recipient, err := m.Store.GetAgentByName(taskID, agentName)
+	if err != nil {
+		return err
+	}
+	inbox := m.Paths.InboxPath(taskID, recipient.Name)
+	if err := msg.Send(inbox, from, body); err != nil {
+		return err
+	}
+	_ = m.Store.InsertMessage(taskID, from, recipient.Name, body)
+	if recipient.Status == db.StatusIdle {
+		_ = m.Nudge(recipient)
+	}
+	return nil
 }

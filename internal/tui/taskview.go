@@ -10,9 +10,10 @@ import (
 )
 
 type taskModel struct {
-	taskID     int64
-	cursor     int
-	confirming bool // pending archive confirmation
+	taskID  int64
+	cursor  int
+	confirm string // pending confirmation: "" | archive | land | squash | pr
+	busy    string // in-flight slow action label ("" when idle)
 }
 
 func newTaskView(taskID int64) taskModel { return taskModel{taskID: taskID} }
@@ -37,20 +38,49 @@ func (a App) currentTask() (db.Task, bool) {
 func (a App) updateTask(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	agents := a.snap.agents[a.taskV.taskID]
 
-	if a.taskV.confirming {
-		switch msg.String() {
-		case "y":
-			a.taskV.confirming = false
-			mgr, id := a.mgr, a.taskV.taskID
+	if a.taskV.busy != "" {
+		return a, nil
+	}
+	if a.taskV.confirm != "" {
+		kind := a.taskV.confirm
+		a.taskV.confirm = ""
+		if msg.String() != "y" {
+			return a, nil
+		}
+		mgr, id := a.mgr, a.taskV.taskID
+		switch kind {
+		case "archive":
 			a.scr = screenDashboard
 			return a, func() tea.Msg { return actionErrMsg{mgr.Archive(id)} }
-		default:
-			a.taskV.confirming = false
+		case "land", "squash":
+			a.taskV.busy = "landing"
+			squash := kind == "squash"
+			return a, func() tea.Msg {
+				target, err := mgr.Land(id, squash)
+				return landedMsg{what: "landed into " + target, err: err}
+			}
+		case "pr":
+			a.taskV.busy = "creating PR"
+			return a, func() tea.Msg {
+				url, err := mgr.CreatePR(id)
+				return landedMsg{what: "PR created: " + url, err: err}
+			}
 		}
 		return a, nil
 	}
 
 	switch msg.String() {
+	case "m":
+		a.taskV.confirm = "land"
+		return a, nil
+	case "S":
+		a.taskV.confirm = "squash"
+		return a, nil
+	case "p":
+		a.taskV.confirm = "pr"
+		return a, nil
+	case "d":
+		return a.openDiff()
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "esc":
@@ -81,8 +111,17 @@ func (a App) updateTask(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return a, func() tea.Msg { return actionErrMsg{mgr.Recover(ag.ID)} }
 			}
 		}
+	case "R":
+		mgr, id := a.mgr, a.taskV.taskID
+		return a, func() tea.Msg {
+			n, err := mgr.RecoverAllDead(id)
+			if err != nil {
+				return actionErrMsg{err}
+			}
+			return landedMsg{what: fmt.Sprintf("recovered %d agent(s)", n)}
+		}
 	case "x":
-		a.taskV.confirming = true
+		a.taskV.confirm = "archive"
 	}
 	return a, nil
 }
@@ -95,6 +134,16 @@ func (a App) viewTask(width, height int) string {
 	agents := a.snap.agents[task.ID]
 
 	var b strings.Builder
+	if cap := a.mgr.Cfg.MaxTaskBudgetUSD; cap > 0 {
+		var total float64
+		for _, ag := range agents {
+			total += ag.CostUSD
+		}
+		if total > cap {
+			b.WriteString("\n " + sBadgeHot.Render(fmt.Sprintf("over budget: $%.2f of $%.2f cap", total, cap)) +
+				sDim.Render(" — the orchestrator has been told to wrap up") + "\n")
+		}
+	}
 	if task.Status == "done" {
 		b.WriteString("\n " + sBadgeDone.Render("✓ ready for review") + " " +
 			sNormal.Render("review branch ") + sPurple.Render(task.Branch) +
@@ -136,9 +185,22 @@ func (a App) viewTask(width, height int) string {
 		}
 	}
 
-	if a.taskV.confirming {
-		b.WriteString("\n " + sBadgeHot.Render("archive this task?") +
-			sNormal.Render(" kills its tmux session, removes worktrees, keeps branches — ") +
+	if a.taskV.busy != "" {
+		b.WriteString("\n " + sBadgeHot.Render(a.taskV.busy+"…") + "\n")
+	}
+	if a.taskV.confirm != "" {
+		var q string
+		switch a.taskV.confirm {
+		case "archive":
+			q = "archive this task? kills its tmux session, removes worktrees, keeps branches"
+		case "land":
+			q = fmt.Sprintf("merge %s into your checkout's current branch (--no-ff)?", task.Branch)
+		case "squash":
+			q = fmt.Sprintf("squash-merge %s into your checkout's current branch as one commit?", task.Branch)
+		case "pr":
+			q = fmt.Sprintf("push %s to origin and open a GitHub PR?", task.Branch)
+		}
+		b.WriteString("\n " + sBadgeHot.Render(q) + " " +
 			sKeyChip.Render("y") + sNormal.Render(" confirm, any other key cancels") + "\n")
 	}
 

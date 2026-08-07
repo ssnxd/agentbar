@@ -43,6 +43,14 @@ type Config struct {
 	ExtraAllow []string `json:"extra_allow,omitempty"`
 	// RepoRoots are scanned (a few levels deep) by the new-task repo picker.
 	RepoRoots []string `json:"repo_roots"`
+	// PreLand runs (sh -c, in the repo) before a local land; non-zero exit
+	// aborts the merge. Put your test/lint gate here.
+	PreLand string `json:"pre_land,omitempty"`
+	// MaxTaskBudgetUSD warns and asks the orchestrator to wrap up when a
+	// task's total agent spend exceeds it. 0 disables.
+	MaxTaskBudgetUSD float64 `json:"max_task_budget_usd,omitempty"`
+	// MaxConcurrentWorkers caps live workers per task. 0 disables.
+	MaxConcurrentWorkers int `json:"max_concurrent_workers,omitempty"`
 }
 
 func defaultConfig() Config {

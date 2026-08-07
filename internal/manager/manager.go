@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,9 @@ type Manager struct {
 	Store *db.Store
 	Tmux  *tmux.Client
 	Exe   string // absolute path to the workflow binary
+
+	nudgeMu   sync.Mutex
+	lastNudge map[int64]time.Time // agent id → last inbox nudge
 }
 
 func New(p config.Paths, cfg config.Config, store *db.Store) (*Manager, error) {
@@ -36,11 +40,12 @@ func New(p config.Paths, cfg config.Config, store *db.Store) (*Manager, error) {
 		return nil, err
 	}
 	return &Manager{
-		Paths: p,
-		Cfg:   cfg,
-		Store: store,
-		Tmux:  tmux.New(config.TmuxSocket, p.TmuxConf),
-		Exe:   exe,
+		Paths:     p,
+		Cfg:       cfg,
+		Store:     store,
+		Tmux:      tmux.New(config.TmuxSocket, p.TmuxConf),
+		Exe:       exe,
+		lastNudge: make(map[int64]time.Time),
 	}, nil
 }
 
@@ -124,6 +129,16 @@ func (m *Manager) SpawnWorker(taskID int64, name, model, prompt string) (db.Agen
 	name = tmux.SanitizeName(name)
 	if name == "orchestrator" {
 		return db.Agent{}, fmt.Errorf("agent name %q is reserved", name)
+	}
+	if cap := m.Cfg.MaxConcurrentWorkers; cap > 0 {
+		live, err := m.Store.CountLiveWorkers(taskID)
+		if err != nil {
+			return db.Agent{}, err
+		}
+		if live >= cap {
+			return db.Agent{}, fmt.Errorf(
+				"concurrency cap reached (%d live workers, max %d) — wait for a worker to finish or raise max_concurrent_workers", live, cap)
+		}
 	}
 	if model == "" {
 		model = m.Cfg.DefaultWorkerModel
@@ -257,6 +272,19 @@ func (m *Manager) runAgentCmd(agentID int64, resume bool) []string {
 // `workflow run-agent` inside the pane.
 func (m *Manager) ClaudeArgv(a db.Agent, resume bool) ([]string, error) {
 	dir := m.agentDir(a.TaskID, a.Name)
+	// Seed the worktree's project-local settings from the agent's canonical
+	// copy. Claude Code watches settings files and hot-reloads hooks, so
+	// editing either file reaches the RUNNING session — something an inline
+	// --settings argument can never do. Re-seeding here also self-heals
+	// after worktree recreation during recovery.
+	canonical := filepath.Join(dir, "settings.json")
+	if raw, err := os.ReadFile(canonical); err == nil {
+		local := filepath.Join(a.WorktreePath, ".claude", "settings.local.json")
+		if err := os.MkdirAll(filepath.Dir(local), 0o755); err == nil {
+			_ = os.WriteFile(local, raw, 0o644)
+		}
+	}
+
 	mode := m.Cfg.PermissionMode
 	if mode == "" {
 		mode = "bypassPermissions"
@@ -265,7 +293,6 @@ func (m *Manager) ClaudeArgv(a db.Agent, resume bool) ([]string, error) {
 		"claude",
 		"--model", a.Model,
 		"--permission-mode", mode,
-		"--settings", filepath.Join(dir, "settings.json"),
 		"--add-dir", m.Paths.ClaudeAddDir,
 	}
 	if resume {
