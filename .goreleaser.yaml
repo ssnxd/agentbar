@@ -1,0 +1,43 @@
+version: 2
+
+project_name: workflow
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/workflow
+    binary: workflow
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
+  footer: |
+    ---
+    Requires tmux >= 3.2 and the Claude Code CLI in PATH. Run `workflow doctor` after install.
