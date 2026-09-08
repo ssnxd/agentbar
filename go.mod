@@ -1,8 +1,6 @@
 module github.com/ssnxd/agentbar
 
-go 1.25.7
-
-toolchain go1.26.1
+go 1.26.3
 
 require (
 	charm.land/bubbletea/v2 v2.0.8
