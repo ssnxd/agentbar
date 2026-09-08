@@ -28,6 +28,10 @@ func main() {
 		cli.Toggle(args)
 	case "jump":
 		cli.Jump(args)
+	case "install":
+		cli.Install(args)
+	case "doctor":
+		cli.Doctor()
 	case "version", "-v", "--version":
 		fmt.Println("agentbar", version)
 	case "help", "-h", "--help":

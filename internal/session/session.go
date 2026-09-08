@@ -114,24 +114,35 @@ func Build(d Deps) []Session {
 	return out
 }
 
-// assignProjects names each session's group by its cwd basename, adding the
-// parent directory when two different cwds share a basename.
+// projectBase is the short group name for a cwd: its basename, or
+// "<repo>/<worktree>" for Claude's own worktrees under <repo>/.claude/worktrees/.
+func projectBase(cwd string) string {
+	base := filepath.Base(cwd)
+	parent := filepath.Dir(cwd)
+	if filepath.Base(parent) == "worktrees" && filepath.Base(filepath.Dir(parent)) == ".claude" {
+		repo := filepath.Base(filepath.Dir(filepath.Dir(parent)))
+		return repo + "/" + base
+	}
+	return base
+}
+
+// assignProjects names each session's group by projectBase, adding the
+// parent directory when two different cwds would share a name.
 func assignProjects(ss []Session) {
-	byBase := map[string]map[string]bool{}
+	byName := map[string]map[string]bool{}
 	for _, s := range ss {
-		base := filepath.Base(s.CWD)
-		if byBase[base] == nil {
-			byBase[base] = map[string]bool{}
+		name := projectBase(s.CWD)
+		if byName[name] == nil {
+			byName[name] = map[string]bool{}
 		}
-		byBase[base][s.CWD] = true
+		byName[name][s.CWD] = true
 	}
 	for i := range ss {
-		base := filepath.Base(ss[i].CWD)
-		if len(byBase[base]) > 1 {
-			ss[i].Project = filepath.Join(filepath.Base(filepath.Dir(ss[i].CWD)), base)
-		} else {
-			ss[i].Project = base
+		name := projectBase(ss[i].CWD)
+		if len(byName[name]) > 1 {
+			name = filepath.Join(filepath.Base(filepath.Dir(ss[i].CWD)), filepath.Base(ss[i].CWD))
 		}
+		ss[i].Project = name
 	}
 }
 

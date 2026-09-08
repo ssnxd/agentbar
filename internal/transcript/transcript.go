@@ -40,14 +40,40 @@ func MungeProjectDir(cwd string) string {
 	return mungeRe.ReplaceAllString(cwd, "-")
 }
 
+var found = struct {
+	sync.Mutex
+	m map[string]string // session id → transcript path
+}{m: map[string]string{}}
+
+func isFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
 // Newest returns the transcript path for (cwd, sessionID): <sessionID>.jsonl
-// when it exists, otherwise the most recently modified .jsonl in the
-// project dir, or "" when there is none.
+// under the cwd's project dir, else under any project dir (a session that
+// cd'd into a worktree keeps its transcript where it started), else the most
+// recently modified .jsonl in the cwd's project dir, or "" when none.
 func Newest(projectsDir, cwd, sessionID string) string {
 	dir := filepath.Join(projectsDir, MungeProjectDir(cwd))
 	if sessionID != "" {
-		p := filepath.Join(dir, sessionID+".jsonl")
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		found.Lock()
+		p, ok := found.m[sessionID]
+		found.Unlock()
+		if ok && isFile(p) {
+			return p
+		}
+		p = filepath.Join(dir, sessionID+".jsonl")
+		if !isFile(p) {
+			p = ""
+			if ms, _ := filepath.Glob(filepath.Join(projectsDir, "*", sessionID+".jsonl")); len(ms) > 0 {
+				p = ms[0]
+			}
+		}
+		if p != "" {
+			found.Lock()
+			found.m[sessionID] = p
+			found.Unlock()
 			return p
 		}
 	}

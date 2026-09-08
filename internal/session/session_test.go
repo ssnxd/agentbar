@@ -105,6 +105,21 @@ func TestBuild(t *testing.T) {
 	}
 }
 
+func TestProjectBase(t *testing.T) {
+	cases := map[string]string{
+		"/u/code/miivo": "miivo",
+		"/u/code/miivo/.claude/worktrees/fix+google-seal": "miivo/fix+google-seal",
+		"/u/code/miivo/.claude/worktrees/feat/agentbar":   "agentbar",
+		"/u/code/worktrees/x":                             "x",
+		"/":                                               "/",
+	}
+	for in, want := range cases {
+		if got := projectBase(in); got != want {
+			t.Errorf("%s: got %q want %q", in, got, want)
+		}
+	}
+}
+
 func TestBuildEmpty(t *testing.T) {
 	if ss := Build(Deps{Transcript: func(string, string) transcript.Info { return transcript.Info{} }}); len(ss) != 0 {
 		t.Errorf("got %+v", ss)

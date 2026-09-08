@@ -99,6 +99,20 @@ func TestNewestPrefersSessionFile(t *testing.T) {
 	}
 }
 
+func TestNewestFindsSessionUnderAnotherProjectDir(t *testing.T) {
+	projects := t.TempDir()
+	origin := filepath.Join(projects, MungeProjectDir("/u/code/app"))
+	_ = os.MkdirAll(origin, 0o755)
+	_ = os.WriteFile(filepath.Join(origin, "moved.jsonl"), []byte("{}\n"), 0o644)
+	// the session later cd'd into a worktree; its cwd's project dir is empty
+	wt := "/u/code/app/.claude/worktrees/feat"
+	_ = os.MkdirAll(filepath.Join(projects, MungeProjectDir(wt)), 0o755)
+	got := Newest(projects, wt, "moved")
+	if filepath.Base(got) != "moved.jsonl" || filepath.Dir(got) != origin {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestMungeProjectDir(t *testing.T) {
 	if got := MungeProjectDir("/Users/x/code/my.app"); got != "-Users-x-code-my-app" {
 		t.Errorf("munge = %q", got)
