@@ -1,6 +1,9 @@
 package tmuxctl
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // Action is what a toggle keypress does given where the sidebar is.
 type Action int
@@ -57,7 +60,7 @@ func Toggle(r Runner, o Opts, curHint string) error {
 	case ActionFocus:
 		return SelectPane(r, sb.PaneID)
 	default:
-		if err := join(r, o, sb.PaneID, cur); err != nil {
+		if err := join(r, o, sb.PaneID, cur, false); err != nil {
 			return err
 		}
 		return SelectPane(r, sb.PaneID)
@@ -76,17 +79,35 @@ func open(r Runner, o Opts, cur string) error {
 	if _, err := r.Run("set-option", "-p", "-t", id, "@agentbar", "1"); err != nil {
 		return err
 	}
+	if err := pinWidth(r, o, id); err != nil {
+		return err
+	}
 	if style, err := r.Run("show-options", "-gqv", "window-active-style"); err == nil && style != "" {
 		_, _ = r.Run("select-pane", "-t", id, "-P", style)
 	}
 	return nil
 }
 
-// join moves the sidebar pane next to target.
-func join(r Runner, o Opts, sidebar, target string) error {
-	args := append([]string{"join-pane"}, splitFlags(o)...)
+// join moves the sidebar pane next to target and pins its width. detach
+// keeps focus where it is (follow); otherwise the sidebar becomes active.
+func join(r Runner, o Opts, sidebar, target string, detach bool) error {
+	args := []string{"join-pane"}
+	if detach {
+		args = append(args, "-d")
+	}
+	args = append(args, splitFlags(o)...)
 	args = append(args, "-s", sidebar, "-t", target)
-	_, err := r.Run(args...)
+	if _, err := r.Run(args...); err != nil {
+		return err
+	}
+	return pinWidth(r, o, sidebar)
+}
+
+// pinWidth resizes the sidebar to the configured width. join-pane -l sets
+// it too, but a later layout change in the target window (a pane closing,
+// the window being re-laid out) can leave it wider.
+func pinWidth(r Runner, o Opts, sidebar string) error {
+	_, err := r.Run("resize-pane", "-t", sidebar, "-x", strconv.Itoa(o.Width))
 	return err
 }
 
@@ -112,10 +133,7 @@ func Follow(r Runner, o Opts, window string) error {
 	if target == "" {
 		return nil // window vanished between the hook and now
 	}
-	args := append([]string{"join-pane", "-d"}, splitFlags(o)...)
-	args = append(args, "-s", sb.PaneID, "-t", target)
-	_, err = r.Run(args...)
-	return err
+	return join(r, o, sb.PaneID, target, true)
 }
 
 // Jump focuses target and brings the sidebar along into its window. When the
@@ -131,7 +149,7 @@ func Jump(r Runner, o Opts, target string) error {
 	}
 	sb := FindSidebar(panes)
 	if sb != nil && sb.WindowID != tp.WindowID {
-		if err := join(r, o, sb.PaneID, target); err != nil {
+		if err := join(r, o, sb.PaneID, target, false); err != nil {
 			return err
 		}
 	}

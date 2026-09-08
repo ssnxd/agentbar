@@ -93,6 +93,7 @@ func TestToggleOpensWithTagAndStyle(t *testing.T) {
 	for _, want := range []string{
 		"split-window -h -b -l 42 -t %5 -P -F #{pane_id} /bin/agentbar ui",
 		"set-option -p -t %99 @agentbar 1",
+		"resize-pane -t %99 -x 42",
 		"select-pane -t %99 -P fg=#cdd6f4,bg=#1e1e2e",
 	} {
 		if !strings.Contains(f.joined(), want) {
@@ -177,7 +178,7 @@ func TestFollow(t *testing.T) {
 	if err := Follow(f, Opts{Side: "left", Width: 42}, "@2"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.joined(), "join-pane -d -h -b -l 42 -s %6 -t %7") {
+	if !strings.Contains(f.joined(), "join-pane -d -h -b -l 42 -s %6 -t %7") || !strings.Contains(f.joined(), "resize-pane -t %6 -x 42") {
 		t.Errorf("calls:\n%s", f.joined())
 	}
 	if strings.Contains(f.joined(), "select-pane") {
