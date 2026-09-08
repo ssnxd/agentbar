@@ -24,7 +24,7 @@ type Info struct {
 	Branch         string
 	PermissionMode string
 	ContextTokens  int64
-	LastActivity   time.Time // file mtime
+	LastActivity   time.Time // timestamp of the last substantive line, else file mtime
 	TurnOpen       bool      // last substantive line was not a turn_duration
 	Known          bool      // file existed and was parsed
 }
@@ -124,7 +124,9 @@ func Tail(path string) Info {
 		return c.info
 	}
 	info := parse(path, st.Size())
-	info.LastActivity = st.ModTime()
+	if info.LastActivity.IsZero() {
+		info.LastActivity = st.ModTime()
+	}
 	info.Known = true
 	cache.Lock()
 	cache.m[path] = cached{size: st.Size(), mod: st.ModTime(), info: info}
@@ -135,6 +137,7 @@ func Tail(path string) Info {
 type line struct {
 	Type           string `json:"type"`
 	Subtype        string `json:"subtype"`
+	Timestamp      string `json:"timestamp"`
 	IsMeta         bool   `json:"isMeta"`
 	AITitle        string `json:"aiTitle"`
 	GitBranch      string `json:"gitBranch"`
@@ -198,13 +201,23 @@ func parse(path string, size int64) Info {
 			}
 		}
 		// Track the last substantive line to classify turn state. Meta and
-		// bookkeeping lines don't tell us whether a turn is open.
+		// bookkeeping lines (Claude appends e.g. away_summary while idle)
+		// don't tell us whether a turn is open, and their timestamps are not
+		// activity.
+		substantive := false
 		switch {
 		case d.IsMeta:
 		case d.Type == "system" && d.Subtype == "turn_duration":
 			lastKind = "turn_end"
+			substantive = true
 		case d.Type == "user" || d.Type == "assistant" || d.Type == "attachment":
 			lastKind = "turn_open"
+			substantive = true
+		}
+		if substantive && d.Timestamp != "" {
+			if ts, err := time.Parse(time.RFC3339Nano, d.Timestamp); err == nil {
+				info.LastActivity = ts
+			}
 		}
 	}
 	info.TurnOpen = lastKind == "turn_open"

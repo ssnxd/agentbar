@@ -28,7 +28,15 @@ func Map(p Payload, statusOverride string) Outcome {
 		return o
 	}
 	switch p.HookEventName {
-	case "SessionStart", "UserPromptSubmit", "PreToolUse":
+	case "SessionStart":
+		// A fresh, resumed, or cleared session sits at its prompt. Only a
+		// compaction restart happens mid-turn.
+		if p.Source == "compact" {
+			o.Status = state.StatusWorking
+		} else {
+			o.Status = state.StatusWaiting
+		}
+	case "UserPromptSubmit", "PreToolUse":
 		o.Status = state.StatusWorking
 	case "PermissionRequest":
 		o.Status = state.StatusNeedsYou

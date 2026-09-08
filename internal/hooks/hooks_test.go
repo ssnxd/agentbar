@@ -11,11 +11,14 @@ import (
 func TestMapTable(t *testing.T) {
 	cases := []struct {
 		event, override, tool  string
+		source                 string
 		input                  map[string]any
 		wantStatus, wantDetail string
 		wantDelete             bool
 	}{
-		{event: "SessionStart", wantStatus: state.StatusWorking},
+		{event: "SessionStart", source: "startup", wantStatus: state.StatusWaiting},
+		{event: "SessionStart", source: "resume", wantStatus: state.StatusWaiting},
+		{event: "SessionStart", source: "compact", wantStatus: state.StatusWorking},
 		{event: "UserPromptSubmit", wantStatus: state.StatusWorking},
 		{event: "PreToolUse", tool: "Bash", input: map[string]any{"command": "ls"}, wantStatus: state.StatusWorking, wantDetail: "Bash ls"},
 		{event: "PermissionRequest", tool: "Bash", input: map[string]any{"command": "git push origin main"}, wantStatus: state.StatusNeedsYou, wantDetail: "Bash git push origin main"},
@@ -26,7 +29,7 @@ func TestMapTable(t *testing.T) {
 		{event: "SessionEnd", wantDelete: true},
 	}
 	for _, c := range cases {
-		o := Map(Payload{HookEventName: c.event, ToolName: c.tool, ToolInput: c.input}, c.override)
+		o := Map(Payload{HookEventName: c.event, ToolName: c.tool, ToolInput: c.input, Source: c.source}, c.override)
 		if o.Ignore || o.Delete != c.wantDelete || o.Status != c.wantStatus || (c.wantDetail != "" && o.Detail != c.wantDetail) {
 			t.Errorf("%s/%s: got %+v", c.event, c.override, o)
 		}

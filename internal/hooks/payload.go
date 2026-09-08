@@ -20,6 +20,7 @@ type Payload struct {
 	ToolInput        map[string]any `json:"tool_input"`
 	NotificationType string         `json:"notification_type"`
 	PermissionMode   string         `json:"permission_mode"`
+	Source           string         `json:"source"` // SessionStart: startup | resume | clear | compact | fork
 }
 
 // Parse reads one hook payload. Input is capped at 1MB: tool_input can carry

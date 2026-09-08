@@ -45,6 +45,23 @@ func TestTailReopensTurnAndInvalidatesCache(t *testing.T) {
 	}
 }
 
+func TestTailLastActivityIgnoresBookkeepingLines(t *testing.T) {
+	body := `{"type":"assistant","timestamp":"2026-09-08T08:27:00.000Z","message":{"model":"m"}}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-09-08T08:27:29.447Z"}
+{"type":"system","subtype":"away_summary","timestamp":"2026-09-08T08:30:38.294Z"}
+`
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	_ = os.WriteFile(p, []byte(body), 0o644)
+	i := Tail(p)
+	want := time.Date(2026, 9, 8, 8, 27, 29, 447000000, time.UTC)
+	if !i.LastActivity.Equal(want) {
+		t.Errorf("LastActivity = %v, want %v (turn_duration, not away_summary)", i.LastActivity, want)
+	}
+	if i.TurnOpen {
+		t.Error("away_summary must not reopen the turn")
+	}
+}
+
 func TestTailIgnoresUserToolResultsForFirstPrompt(t *testing.T) {
 	// A user line whose content is an array (tool_result) is not a prompt.
 	body := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}
