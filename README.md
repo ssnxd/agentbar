@@ -4,24 +4,25 @@ A tmux sidebar for the Claude Code sessions you run by hand.
 
 You keep starting `claude` in tmux panes yourself. agentbar only adds
 visibility: press `prefix a` and every window gets a narrow pane listing
-every running session, grouped by project, with what it is doing right now
-and where it lives in tmux. Press `enter` to jump to one. Nothing ever
-moves between windows, so switching windows never resizes or repaints your
-panes.
+every running session, with what it is doing right now and where it lives
+in tmux. Press `enter` to jump to one. Nothing ever moves between windows,
+so switching windows never resizes or repaints your panes.
+
+![agentbar in a tmux window: the sidebar on the left lists four Claude sessions, the one running in this window marked with a bar](docs/screenshot.png)
+
+One card per session, in tmux window order:
 
 ```
  claude ─────────────────── 4 · 1 needs you
 
- miivo-api
-  ● needs you  fix auth middleware
-    work:2.1 · fable · fix/auth       12m
-    Bash git push origin main
-  ◐ working    add rate limiter
-    work:3.1 · opus · main             3m
+ miivo-api                          3h 12m     repo · time since start
+ Fix auth middleware token refresh              session title (wraps)
+ fix/auth                       ● needs you    branch · status
+ Bash git push origin main                     pending permission
 
- dotfiles
-  ○ waiting    ghostty theme
-    dot:1.1 · sonnet · main           40m
+▌dotfiles                            2d 4h     ▌ marks the session
+▌Ghostty theme                                   running in this window
+▌main                             ○ waiting
 
  enter jump  y accept  x kill  / filter  ?
 ```
@@ -91,10 +92,14 @@ to inference from the transcript.
 | tab        | next session that needs you                                     |
 | y          | accept: press Enter in a session sitting on a permission prompt |
 | x          | kill the session (asks y/n, sends SIGTERM)                      |
-| /          | filter by project, title, branch, or status; esc clears         |
+| /          | filter by repo, title, branch, or status; esc clears            |
 | r          | refresh now                                                     |
 | ?          | help                                                            |
 | q          | close every sidebar                                             |
+
+The cursor starts on the session running in the sidebar's own window. The
+list keeps tmux order, so a status change never reshuffles rows; `tab`
+finds the next session that needs you.
 
 ## How it works
 
