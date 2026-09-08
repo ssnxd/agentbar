@@ -214,8 +214,11 @@ func (m Model) body() []line {
 	}
 	if len(out) == 0 {
 		out = append(out, line{text: ""}, line{text: sDim.Render("  no claude sessions running")})
-		if m.filter != "" {
+		switch {
+		case m.filter != "":
 			out[1].text = sDim.Render("  nothing matches " + m.filter)
+		case !m.connected && m.sessions == nil && m.width > 0 && m.snaps != nil:
+			out[1].text = sDim.Render("  connecting…")
 		}
 	}
 	return out

@@ -1,45 +1,41 @@
-// Package ui is the sidebar: a Bubble Tea app that polls session state once
-// a second and offers jump, accept, kill, and filter.
+// Package ui is the sidebar viewer: a Bubble Tea app fed by the daemon's
+// snapshots, offering jump, accept, kill, and filter. One runs per window.
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/ssnxd/agentbar/internal/paths"
-	"github.com/ssnxd/agentbar/internal/registry"
+	"github.com/ssnxd/agentbar/internal/daemon"
 	"github.com/ssnxd/agentbar/internal/session"
 	"github.com/ssnxd/agentbar/internal/state"
 	"github.com/ssnxd/agentbar/internal/tmuxctl"
-	"github.com/ssnxd/agentbar/internal/transcript"
 )
 
 const (
-	pollEvery = time.Second
+	tickEvery = 500 * time.Millisecond
 	msgFor    = 3 * time.Second
-	sweepAge  = time.Hour
 )
 
 type (
 	tickMsg     struct{}
-	snapshotMsg struct {
-		sessions []session.Session
-		panes    map[string]tmuxctl.Pane
-		err      error
-	}
-	actionMsg struct {
+	snapshotMsg daemon.Snapshot
+	actionMsg   struct {
 		text string
 		err  error
 	}
 )
 
-// Model is the whole sidebar state. Rendering is pure over it.
+// Model is the whole viewer state. Rendering is pure over it.
 type Model struct {
-	runner tmuxctl.Runner
-	opts   tmuxctl.Opts
+	runner  tmuxctl.Runner
+	snaps   <-chan daemon.Snapshot
+	exe     string
+	ownPane string // TMUX_PANE of this viewer
 
 	sessions []session.Session
 	panes    map[string]tmuxctl.Pane
@@ -57,12 +53,18 @@ type Model struct {
 	tick          int
 	now           time.Time
 	err           error
+	connected     bool
 }
 
-// Run launches the sidebar (blocking).
+// Run launches the viewer (blocking). It connects to the daemon, starting
+// one if none answers.
 func Run() {
-	r := tmuxctl.Exec{}
-	m := Model{runner: r, opts: tmuxctl.LoadOpts(r), now: time.Now()}
+	exe, _ := os.Executable()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan daemon.Snapshot, 1)
+	go daemon.Connect(ctx, daemon.SocketPath(), ch, func() error { return daemon.StartDetached(exe) })
+	m := Model{runner: tmuxctl.Exec{}, snaps: ch, exe: exe, ownPane: os.Getenv("TMUX_PANE"), now: time.Now()}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "agentbar:", err)
 		os.Exit(1)
@@ -70,55 +72,31 @@ func Run() {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(refresh(m.runner), tick())
+	return tea.Batch(waitSnapshot(m.snaps), tick())
 }
 
 func tick() tea.Cmd {
-	return tea.Tick(pollEvery, func(time.Time) tea.Msg { return tickMsg{} })
+	return tea.Tick(tickEvery, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-// refresh does all IO off the UI goroutine and returns one snapshot.
-func refresh(r tmuxctl.Runner) tea.Cmd {
+func waitSnapshot(ch <-chan daemon.Snapshot) tea.Cmd {
 	return func() tea.Msg {
-		now := time.Now()
-		reg := registry.Load(paths.SessionsDir(), registry.Alive)
-		live := map[string]bool{}
-		var interactive []registry.Entry
-		for _, e := range reg {
-			live[e.SessionID] = true
-			if e.Kind == "" || e.Kind == "interactive" {
-				interactive = append(interactive, e)
-			}
+		s, ok := <-ch
+		if !ok {
+			return nil
 		}
-		states := state.ReadAll(paths.StateDir())
-		state.Sweep(paths.StateDir(), live, sweepAge, now)
-
-		panes := map[string]tmuxctl.Pane{}
-		ps, perr := tmuxctl.ListPanes(r)
-		for _, p := range ps {
-			panes[p.PaneID] = p
-		}
-		ss := session.Build(session.Deps{
-			Registry: interactive,
-			States:   states,
-			Transcript: func(cwd, id string) transcript.Info {
-				p := transcript.Newest(paths.ProjectsDir(), cwd, id)
-				if p == "" {
-					return transcript.Info{}
-				}
-				return transcript.Tail(p)
-			},
-			Now: now,
-		})
-		for i := range ss {
-			if p, ok := panes[ss[i].TmuxPaneID]; ok {
-				ss[i].TmuxTarget = tmuxctl.TargetLabel(p)
-			} else {
-				ss[i].InTmux = false
-			}
-		}
-		return snapshotMsg{sessions: ss, panes: panes, err: perr}
+		return snapshotMsg(s)
 	}
+}
+
+// windowActive reports whether this viewer's window is the one on screen.
+// Idle windows skip the spinner tick so they cost nothing.
+func (m Model) windowActive() bool {
+	if m.ownPane == "" {
+		return true
+	}
+	p, ok := m.panes[m.ownPane]
+	return !ok || p.WindowActive
 }
 
 // current returns the selected session.
@@ -197,20 +175,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tickMsg:
-		m.tick++
 		m.now = time.Now()
-		return m, tea.Batch(refresh(m.runner), tick())
+		if m.windowActive() {
+			m.tick++
+		}
+		return m, tick()
 	case snapshotMsg:
-		m.sessions, m.panes, m.err = msg.sessions, msg.panes, msg.err
+		m.sessions, m.panes = msg.Sessions, msg.Panes
+		m.err = nil
+		if msg.Err != "" {
+			m.err = fmt.Errorf("%s", msg.Err)
+		}
+		m.connected = true
+		m.now = time.Now()
 		m.ensureSelection()
-		return m, nil
+		return m, waitSnapshot(m.snaps)
 	case actionMsg:
 		if msg.err != nil {
 			m.flash(msg.err.Error())
 		} else if msg.text != "" {
 			m.flash(msg.text)
 		}
-		return m, refresh(m.runner)
+		return m, nil
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -251,7 +237,7 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch k {
 	case "q":
-		return m, tea.Quit
+		return m, m.closeAll()
 	case "j", "down":
 		m.move(1)
 	case "k", "up":
@@ -277,11 +263,22 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.helpOpen = false
 		m.ensureSelection()
 	case "r":
-		return m, refresh(m.runner)
+		return m, func() tea.Msg { return actionMsg{err: daemon.Nudge()} }
 	case "?":
 		m.helpOpen = !m.helpOpen
 	}
 	return m, nil
+}
+
+// closeAll removes every sidebar, this one included, and lets the daemon
+// idle out.
+func (m Model) closeAll() tea.Cmd {
+	r := m.runner
+	return func() tea.Msg {
+		_ = tmuxctl.SetEnabled(r, false)
+		_, err := tmuxctl.CloseAll(r)
+		return actionMsg{err: err}
+	}
 }
 
 func (m Model) jump() tea.Cmd {
@@ -292,9 +289,9 @@ func (m Model) jump() tea.Cmd {
 	if !cur.InTmux {
 		return func() tea.Msg { return actionMsg{text: "not in tmux: cannot jump"} }
 	}
-	r, o, pane := m.runner, m.opts, cur.TmuxPaneID
+	r, pane := m.runner, cur.TmuxPaneID
 	return func() tea.Msg {
-		return actionMsg{err: tmuxctl.Jump(r, o, pane)}
+		return actionMsg{err: tmuxctl.Jump(r, pane)}
 	}
 }
 
@@ -318,6 +315,7 @@ func (m Model) accept() tea.Cmd {
 		if err := tmuxctl.SendEnter(r, pane); err != nil {
 			return actionMsg{err: err}
 		}
+		_ = daemon.Nudge()
 		return actionMsg{text: "accepted: " + title}
 	}
 }

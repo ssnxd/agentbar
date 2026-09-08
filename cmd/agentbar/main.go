@@ -14,28 +14,42 @@ var version = "dev"
 
 func main() {
 	args := os.Args[1:]
-	cmd := "ui"
+	cmd := "help"
 	if len(args) > 0 {
 		cmd = args[0]
 		args = args[1:]
 	}
 	switch cmd {
-	case "ui":
-		ui.Run()
-	case "event":
-		cli.Event(args)
+	// user-facing
 	case "toggle":
 		cli.Toggle(args)
-	case "jump":
-		cli.Jump(args)
-	case "follow":
-		cli.Follow(args)
-	case "tmux-init":
-		cli.TmuxInit()
+	case "focus":
+		cli.Focus(args)
+	case "close":
+		cli.Close()
 	case "install":
 		cli.Install(args)
 	case "doctor":
 		cli.Doctor()
+	case "tmux-init":
+		cli.TmuxInit()
+	case "jump":
+		cli.Jump(args)
+	// plumbing
+	case "view", "ui":
+		ui.Run()
+	case "daemon":
+		cli.Daemon()
+	case "event":
+		cli.Event(args)
+	case "ensure":
+		cli.Ensure(args)
+	case "reflow":
+		cli.Reflow()
+	case "sweep":
+		cli.Sweep()
+	case "nudge":
+		cli.Nudge()
 	case "version", "-v", "--version":
 		fmt.Println("agentbar", version)
 	case "help", "-h", "--help":
@@ -49,13 +63,15 @@ func main() {
 const usage = `agentbar — a tmux sidebar for running Claude Code sessions
 
 usage:
-  agentbar                      run the sidebar UI (normally launched by toggle)
-  agentbar toggle               open / focus / move / close the sidebar (bind to prefix a)
-  agentbar jump <pane-id>       move the sidebar next to a pane and focus the pane
-  agentbar tmux-init            bind the key and follow hooks (run-shell this from tmux.conf)
-  agentbar follow <window-id>   (hook plumbing) move the sidebar into a window, keep focus
+  agentbar toggle               sidebars in every window, or none (bind to prefix a)
+  agentbar focus                into the sidebar / back to your pane (bind to prefix A)
+  agentbar close                remove every sidebar
   agentbar install [--uninstall]   add (or remove) agentbar hooks in ~/.claude/settings.json
+  agentbar tmux-init            bind keys and install tmux hooks (run-shell this from tmux.conf)
   agentbar doctor               check tmux, hooks, and Claude's session registry
-  agentbar event                (hook plumbing) receive a Claude Code hook on stdin
+  agentbar jump <pane-id>       focus a pane (switching session/window as needed)
   agentbar version
+
+plumbing (run by tmux hooks and the sidebar itself):
+  view · daemon · event · ensure <window> · reflow · sweep · nudge
 `

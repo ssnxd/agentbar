@@ -48,9 +48,10 @@ type Pane struct {
 	Active       bool   // active pane in its window
 	WindowActive bool   // window is current in its session
 	Sidebar      bool   // pane option @agentbar is set
+	WindowWidth  int    // columns of the whole window
 }
 
-const paneFormat = "#{session_name}|#{window_id}|#{window_index}|#{pane_id}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{window_active}|#{@agentbar}"
+const paneFormat = "#{session_name}|#{window_id}|#{window_index}|#{pane_id}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{window_active}|#{@agentbar}|#{window_width}"
 
 // ListPanes lists every pane on the server.
 func ListPanes(r Runner) ([]Pane, error) {
@@ -61,12 +62,14 @@ func ListPanes(r Runner) ([]Pane, error) {
 	var ps []Pane
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "|")
-		if len(f) != 9 {
+		if len(f) != 10 {
 			continue
 		}
+		ww, _ := strconv.Atoi(f[9])
 		ps = append(ps, Pane{
 			SessionName: f[0], WindowID: f[1], WindowIndex: f[2], PaneID: f[3], PaneIndex: f[4],
 			Command: f[5], Active: f[6] == "1", WindowActive: f[7] == "1", Sidebar: f[8] != "",
+			WindowWidth: ww,
 		})
 	}
 	return ps, nil
@@ -129,7 +132,7 @@ func Current(r Runner, hint string) (paneID, windowID string, err error) {
 type Opts struct {
 	Side  string // "left" | "right"
 	Width int
-	Cmd   string // shell command run in the sidebar pane (open only)
+	Cmd   string // shell command run in each sidebar pane
 }
 
 const (

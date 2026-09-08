@@ -5,11 +5,11 @@
 # put `run-shell "$HOME/.local/bin/agentbar tmux-init"` in tmux.conf instead.
 #
 # Options (set -g in tmux.conf before this line):
-#   @agentbar-key     key after prefix               (default: a)
-#   @agentbar-bin     path to the agentbar binary    (default: agentbar on PATH, then ~/.local/bin/agentbar)
-#   @agentbar-follow  on | off: move the sidebar on every window switch (default: on)
-#   @agentbar-side    left | right                   (default: left)
-#   @agentbar-width   sidebar width in columns       (default: 42)
+#   @agentbar-key        toggle key after prefix        (default: a)
+#   @agentbar-focus-key  focus key after prefix         (default: A)
+#   @agentbar-bin        path to the agentbar binary    (default: agentbar on PATH, then ~/.local/bin/agentbar)
+#   @agentbar-side       left | right                   (default: left)
+#   @agentbar-width      sidebar width in columns       (default: 42)
 set -eu
 
 bin="$(tmux show-option -gqv @agentbar-bin)"

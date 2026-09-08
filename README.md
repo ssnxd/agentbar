@@ -3,9 +3,11 @@
 A tmux sidebar for the Claude Code sessions you run by hand.
 
 You keep starting `claude` in tmux panes yourself. agentbar only adds
-visibility: press `prefix a` and a narrow pane lists every running session,
-grouped by project, with what it is doing right now and where it lives in
-tmux. Press `enter` to jump to one; the sidebar follows you.
+visibility: press `prefix a` and every window gets a narrow pane listing
+every running session, grouped by project, with what it is doing right now
+and where it lives in tmux. Press `enter` to jump to one. Nothing ever
+moves between windows, so switching windows never resizes or repaints your
+panes.
 
 ```
  claude ─────────────────── 4 · 1 needs you
@@ -57,10 +59,10 @@ Add one line to your tmux config and reload it:
 
 ```tmux
 # optional, before the run-shell line:
-set -g @agentbar-key    a       # key after prefix (default a)
-set -g @agentbar-follow on      # move the sidebar on every window switch (default on)
-set -g @agentbar-side   left    # left | right
-set -g @agentbar-width  42
+set -g @agentbar-key        a       # toggle key after prefix (default a)
+set -g @agentbar-focus-key  A       # focus key after prefix (default A)
+set -g @agentbar-side       left    # left | right
+set -g @agentbar-width      42
 
 run-shell "$HOME/.local/bin/agentbar tmux-init"
 ```
@@ -69,9 +71,10 @@ Or, from a checkout or with TPM (`set -g @plugin 'ssnxd/agentbar'`), use
 `run-shell ~/path/to/agentbar/agentbar.tmux`; it finds the binary
 (`@agentbar-bin` overrides) and runs the same `tmux-init`.
 
-`tmux-init` binds the key and, with follow on, sets tmux's
-`session-window-changed` and `client-session-changed` hooks so the sidebar
-moves into whatever window you switch to, without taking focus.
+`tmux-init` binds the two keys and installs tmux hooks (indexed `[97]`, so
+your own hooks are untouched): new windows and sessions get a sidebar,
+window resizes re-pin the width, a window left holding only a sidebar is
+closed, and window or session switches refresh the daemon.
 
 Sessions already running when you install pick up the hooks on their next
 event (Claude Code hot-reloads settings); until then the sidebar falls back
@@ -81,22 +84,17 @@ to inference from the transcript.
 
 | Key        | Action                                                          |
 |------------|-----------------------------------------------------------------|
-| `prefix a` | open the sidebar; focus it; bring it to this window; close it   |
+| `prefix a` | open a sidebar in every window, or close them all               |
+| `prefix A` | focus the sidebar, or go back to the pane you came from          |
 | j / k      | move                                                            |
-| enter      | jump to the session's pane (the sidebar moves into that window) |
+| enter      | jump to the session's pane (switches window or session as needed) |
 | tab        | next session that needs you                                     |
 | y          | accept: press Enter in a session sitting on a permission prompt |
 | x          | kill the session (asks y/n, sends SIGTERM)                      |
 | /          | filter by project, title, branch, or status; esc clears         |
 | r          | refresh now                                                     |
 | ?          | help                                                            |
-| q          | close the sidebar                                               |
-
-One press of `prefix a` does the right thing for where the sidebar is: none
-anywhere opens one here; here and focused closes it; here and unfocused
-focuses it; in another window moves it here. With follow on (the default)
-the sidebar also moves by itself whenever you switch windows, so you only
-need the key to open, focus, or close it.
+| q          | close every sidebar                                             |
 
 ## How it works
 
@@ -115,15 +113,22 @@ need the key to open, focus, or close it.
   probably means a prompt).
 - **Enrichment** (title, model, branch, context size) is read from the last
   64KB of the session's transcript, cached by mtime.
-- **The sidebar pane** is tagged with the tmux pane option `@agentbar`, which
-  is how `toggle` and `jump` find it. It is given your `window-active-style`
-  so inactive-pane dimming leaves it readable.
+- **One pane per window, one daemon.** Each sidebar pane is tagged with the
+  tmux pane option `@agentbar` and runs a thin viewer. A single
+  `agentbar daemon` builds the snapshot once a second (or at once when a
+  hook nudges it) and streams it to every viewer over a Unix socket; it
+  exits by itself a minute after the last viewer goes away. Viewers in
+  windows that are not on screen skip their spinner tick. Panes are given
+  your `window-active-style` so inactive-pane dimming leaves them readable.
+  This is the same shape workmux, tmux-pane-tree, and tmux-agent-sidebar
+  use, because it is the only one that never resizes your other panes.
 
 ## Files
 
 ```
 ~/.local/share/agentbar/state/<session_id>.json   hook state
-~/.local/share/agentbar/agentbar.log              hook receiver errors
+~/.local/share/agentbar/daemon.sock, daemon.pid   snapshot daemon
+~/.local/share/agentbar/agentbar.log              hook receiver and daemon errors
 ~/.claude/settings.json                           hooks (backups: settings.json.bak.<timestamp>)
 ```
 
