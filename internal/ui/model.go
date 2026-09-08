@@ -54,6 +54,29 @@ type Model struct {
 	now           time.Time
 	err           error
 	connected     bool
+	here          string // pane id of the session pane in this viewer's window
+}
+
+// herePane finds the active non-sidebar pane in this viewer's own window:
+// the pane the user is in when they look at this sidebar.
+func (m Model) herePane() string {
+	own, ok := m.panes[m.ownPane]
+	if !ok {
+		return ""
+	}
+	var first string
+	for _, p := range m.panes {
+		if p.WindowID != own.WindowID || p.Sidebar {
+			continue
+		}
+		if p.Active {
+			return p.PaneID
+		}
+		if first == "" {
+			first = p.PaneID
+		}
+	}
+	return first
 }
 
 // Run launches the viewer (blocking). It connects to the daemon, starting
@@ -117,6 +140,14 @@ func (m *Model) ensureSelection() {
 	}
 	for _, s := range rows {
 		if s.ID == m.selected {
+			return
+		}
+	}
+	// No valid selection: start on the session in this window if there
+	// is one, else the first row.
+	for _, s := range rows {
+		if m.here != "" && s.TmuxPaneID == m.here {
+			m.selected = s.ID
 			return
 		}
 	}
@@ -188,6 +219,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.connected = true
 		m.now = time.Now()
+		m.here = m.herePane()
 		m.ensureSelection()
 		return m, waitSnapshot(m.snaps)
 	case actionMsg:

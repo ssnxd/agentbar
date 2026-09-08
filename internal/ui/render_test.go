@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/ssnxd/agentbar/internal/session"
 	"github.com/ssnxd/agentbar/internal/state"
+	"github.com/ssnxd/agentbar/internal/tmuxctl"
 )
 
 func sample(now time.Time) []session.Session {
@@ -58,6 +59,45 @@ func TestRenderCards(t *testing.T) {
 		if strings.Contains(l, "● needs you") && !strings.HasSuffix(l, "● needs you") {
 			t.Errorf("status not right-aligned: %q", l)
 		}
+	}
+}
+
+func TestHereMarkerAndDefaultSelection(t *testing.T) {
+	now := time.Now()
+	// this viewer is pane %s1 in window @2; the session pane there is %1
+	m := Model{width: 42, height: 24, now: now, sessions: sample(now), ownPane: "%s1"}
+	m.panes = map[string]tmuxctl.Pane{
+		"%s1": {PaneID: "%s1", WindowID: "@2", Sidebar: true},
+		"%1":  {PaneID: "%1", WindowID: "@2", Active: true},
+		"%2":  {PaneID: "%2", WindowID: "@1", Active: true},
+	}
+	m.here = m.herePane()
+	if m.here != "%1" {
+		t.Fatalf("here = %q", m.here)
+	}
+	m.ensureSelection()
+	if m.selected != "1" {
+		t.Errorf("initial selection should be the session in this window, got %q", m.selected)
+	}
+	out := ansi.Strip(Render(m))
+	marked := 0
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, hereMark) {
+			marked++
+			if !(strings.Contains(l, "miivo-api") || strings.Contains(l, "Fix auth") || strings.Contains(l, "mobile client") || strings.Contains(l, "fix/auth") || strings.Contains(l, "Bash touch")) {
+				t.Errorf("marker on the wrong card: %q", l)
+			}
+		}
+	}
+	if marked != 5 {
+		t.Errorf("expected 5 marked lines for the current card, got %d:\n%s", marked, out)
+	}
+	// a viewer with no session in its window marks nothing
+	m2 := Model{width: 42, height: 24, now: now, sessions: sample(now), ownPane: "%s9"}
+	m2.panes = map[string]tmuxctl.Pane{"%s9": {PaneID: "%s9", WindowID: "@9", Sidebar: true}, "%77": {PaneID: "%77", WindowID: "@9", Active: true}}
+	m2.here = m2.herePane()
+	if strings.Contains(ansi.Strip(Render(m2)), hereMark) {
+		t.Error("no session in this window: no marker")
 	}
 }
 

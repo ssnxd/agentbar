@@ -28,6 +28,7 @@ var (
 	sGroup  = lipgloss.NewStyle().Bold(true).Foreground(cSky)
 	sKey    = lipgloss.NewStyle().Bold(true).Foreground(cSky)
 	sKeyLbl = lipgloss.NewStyle().Foreground(cOverlay1)
+	sHere   = lipgloss.NewStyle().Foreground(cMauve)
 	sMsg    = lipgloss.NewStyle().Foreground(cPeach)
 	sErr    = lipgloss.NewStyle().Foreground(cRed)
 )

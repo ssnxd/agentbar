@@ -13,15 +13,19 @@ import (
 	"github.com/ssnxd/agentbar/internal/state"
 )
 
-// Layout: a flat list, one card per session, in tmux order.
+// Layout: a flat list, one card per session, in tmux order. The card for
+// the session running in this sidebar's own window carries a bar in the
+// left gutter.
 //
-//	 repo                              3h 12m
-//	 Session title, wrapped to at most
-//	 two lines
-//	 branch                         ● needs you
+//	▌repo                              3h 12m
+//	▌Session title, wrapped to at most
+//	▌two lines
+//	▌branch                         ● needs you
 //	 Bash touch /tmp/x                          (needs-you / error only)
 //
 //	 next card...
+
+const hereMark = "▌"
 
 const maxTitleLines = 2
 
@@ -142,11 +146,12 @@ func pad(s string, w int, st lipgloss.Style) string {
 	return s + st.Render(strings.Repeat(" ", gap))
 }
 
-// twoSided renders left and right text on one line of width w, with the
-// right part right-aligned and the left part truncated to fit.
-func twoSided(left, right string, ls, rs, fill lipgloss.Style, w int) string {
+// twoSided renders left and right text on one line of width w after a
+// one-cell gutter, with the right part right-aligned and the left part
+// truncated to fit.
+func twoSided(gutter, left, right string, ls, rs, fill lipgloss.Style, w int) string {
 	rw := ansi.StringWidth(right)
-	lw := w - 1 - rw - 2 // leading space, gap of two
+	lw := w - 1 - rw - 2 // gutter, gap of two
 	if lw < 4 {
 		lw = 4
 	}
@@ -155,7 +160,7 @@ func twoSided(left, right string, ls, rs, fill lipgloss.Style, w int) string {
 	if gap < 1 {
 		gap = 1
 	}
-	return fill.Render(" ") + ls.Render(left) + fill.Render(strings.Repeat(" ", gap)) + rs.Render(right)
+	return gutter + ls.Render(left) + fill.Render(strings.Repeat(" ", gap)) + rs.Render(right)
 }
 
 // line is one rendered row of the body with the session it belongs to.
@@ -206,28 +211,33 @@ func (m Model) body() []line {
 		add := func(text string) {
 			out = append(out, line{text: pad(text, w, fill), id: s.ID})
 		}
+		// gutter: a bar on the session that lives in this sidebar's window
+		gutter := fill.Render(" ")
+		if m.here != "" && s.TmuxPaneID == m.here {
+			gutter = sel(sHere, selected).Render(hereMark)
+		}
 
 		if narrow {
-			add(fill.Render(" ") + sel(lk.style, selected).Render(icon) + fill.Render(" ") + sel(sText, selected).Render(truncate(s.Title, w-3)))
+			add(gutter + sel(lk.style, selected).Render(icon) + fill.Render(" ") + sel(sText, selected).Render(truncate(s.Title, w-3)))
 			out = append(out, line{text: ""})
 			continue
 		}
 
 		// 1: repo (left) · uptime (right)
-		add(twoSided(s.Project, uptime(m.now, s.StartedAt), sel(sGroup, selected), sel(sDim, selected), fill, w))
+		add(twoSided(gutter, s.Project, uptime(m.now, s.StartedAt), sel(sGroup, selected), sel(sDim, selected), fill, w))
 		// 2..3: title, wrapped
 		for _, t := range wrapLines(s.Title, w-2, maxTitleLines) {
-			add(fill.Render(" ") + sel(sText, selected).Render(t))
+			add(gutter + sel(sText, selected).Render(t))
 		}
 		// branch (left) · status (right)
 		branch := s.Branch
 		if branch == "" {
 			branch = "no branch"
 		}
-		add(twoSided(branch, status, sel(sDim, selected), sel(lk.style, selected), fill, w))
+		add(twoSided(gutter, branch, status, sel(sDim, selected), sel(lk.style, selected), fill, w))
 		// detail for rows that need attention
 		if (s.Status == state.StatusNeedsYou || s.Status == state.StatusError) && s.Detail != "" {
-			add(fill.Render(" ") + sel(sSub, selected).Render(truncate(s.Detail, w-2)))
+			add(gutter + sel(sSub, selected).Render(truncate(s.Detail, w-2)))
 		}
 		out = append(out, line{text: ""})
 	}
