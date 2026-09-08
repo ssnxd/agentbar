@@ -21,6 +21,10 @@ func main() {
 	switch cmd {
 	case "event":
 		cli.Event(args)
+	case "toggle":
+		cli.Toggle(args)
+	case "jump":
+		cli.Jump(args)
 	case "version", "-v", "--version":
 		fmt.Println("agentbar", version)
 	case "help", "-h", "--help":
