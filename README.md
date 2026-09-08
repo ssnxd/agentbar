@@ -53,19 +53,25 @@ agentbar install     # adds hooks to ~/.claude/settings.json (backup written fir
 agentbar doctor      # checks tmux, hooks, and Claude's session registry
 ```
 
-Add the plugin to your tmux config and reload it:
+Add one line to your tmux config and reload it:
 
 ```tmux
 # optional, before the run-shell line:
-set -g @agentbar-key   a        # key after prefix (default a)
-set -g @agentbar-side  left     # left | right
-set -g @agentbar-width 42
-set -g @agentbar-bin   ~/.local/bin/agentbar   # if not on PATH
+set -g @agentbar-key    a       # key after prefix (default a)
+set -g @agentbar-follow on      # move the sidebar on every window switch (default on)
+set -g @agentbar-side   left    # left | right
+set -g @agentbar-width  42
 
-run-shell ~/path/to/agentbar/agentbar.tmux
+run-shell "$HOME/.local/bin/agentbar tmux-init"
 ```
 
-With TPM: `set -g @plugin 'ssnxd/agentbar'`.
+Or, from a checkout or with TPM (`set -g @plugin 'ssnxd/agentbar'`), use
+`run-shell ~/path/to/agentbar/agentbar.tmux`; it finds the binary
+(`@agentbar-bin` overrides) and runs the same `tmux-init`.
+
+`tmux-init` binds the key and, with follow on, sets tmux's
+`session-window-changed` and `client-session-changed` hooks so the sidebar
+moves into whatever window you switch to, without taking focus.
 
 Sessions already running when you install pick up the hooks on their next
 event (Claude Code hot-reloads settings); until then the sidebar falls back
@@ -88,7 +94,9 @@ to inference from the transcript.
 
 One press of `prefix a` does the right thing for where the sidebar is: none
 anywhere opens one here; here and focused closes it; here and unfocused
-focuses it; in another window moves it here.
+focuses it; in another window moves it here. With follow on (the default)
+the sidebar also moves by itself whenever you switch windows, so you only
+need the key to open, focus, or close it.
 
 ## How it works
 

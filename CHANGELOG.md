@@ -8,6 +8,8 @@ agent-to-agent messaging, dashboard) is removed; it lives on in git history
 before this release.
 
 - `prefix a` opens, focuses, moves, or closes a tagged sidebar pane.
+- The sidebar follows you on every window switch (tmux hooks set by
+  `agentbar tmux-init`; `@agentbar-follow off` disables).
 - Sessions discovered from Claude Code's own registry
   (`~/.claude/sessions/*.json`), including their exact tmux pane.
 - Status from observe-only hooks installed by `agentbar install`, with

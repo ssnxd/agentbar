@@ -171,6 +171,32 @@ func TestJumpUnknownPane(t *testing.T) {
 	}
 }
 
+func TestFollow(t *testing.T) {
+	// sidebar %6 lives in @1; user switched to @2 whose active pane is %7
+	f := &fake{panes: panes}
+	if err := Follow(f, Opts{Side: "left", Width: 42}, "@2"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.joined(), "join-pane -d -h -b -l 42 -s %6 -t %7") {
+		t.Errorf("calls:\n%s", f.joined())
+	}
+	if strings.Contains(f.joined(), "select-pane") {
+		t.Error("follow must not steal focus")
+	}
+
+	f = &fake{panes: panes}
+	_ = Follow(f, Opts{Side: "left", Width: 42}, "@1")
+	if strings.Contains(f.joined(), "join-pane") {
+		t.Error("already in this window: no join")
+	}
+
+	f = &fake{panes: "work|@1|2|%5|1|zsh|1|1|\n"}
+	_ = Follow(f, Opts{Side: "left", Width: 42}, "@2")
+	if strings.Contains(f.joined(), "join-pane") {
+		t.Error("no sidebar: no join")
+	}
+}
+
 func TestLoadOpts(t *testing.T) {
 	f := &fake{opts: map[string]string{"@agentbar-side": "right", "@agentbar-width": "50"}}
 	o := LoadOpts(f)

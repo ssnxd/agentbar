@@ -28,6 +28,10 @@ func main() {
 		cli.Toggle(args)
 	case "jump":
 		cli.Jump(args)
+	case "follow":
+		cli.Follow(args)
+	case "tmux-init":
+		cli.TmuxInit()
 	case "install":
 		cli.Install(args)
 	case "doctor":
@@ -48,6 +52,8 @@ usage:
   agentbar                      run the sidebar UI (normally launched by toggle)
   agentbar toggle               open / focus / move / close the sidebar (bind to prefix a)
   agentbar jump <pane-id>       move the sidebar next to a pane and focus the pane
+  agentbar tmux-init            bind the key and follow hooks (run-shell this from tmux.conf)
+  agentbar follow <window-id>   (hook plumbing) move the sidebar into a window, keep focus
   agentbar install [--uninstall]   add (or remove) agentbar hooks in ~/.claude/settings.json
   agentbar doctor               check tmux, hooks, and Claude's session registry
   agentbar event                (hook plumbing) receive a Claude Code hook on stdin

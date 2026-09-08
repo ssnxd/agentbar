@@ -90,6 +90,34 @@ func join(r Runner, o Opts, sidebar, target string) error {
 	return err
 }
 
+// Follow brings the sidebar into window without stealing focus. It runs
+// from tmux's session-window-changed hook, so a plain window switch keeps
+// the sidebar in view. No sidebar, or already here: no-op.
+func Follow(r Runner, o Opts, window string) error {
+	panes, err := ListPanes(r)
+	if err != nil {
+		return err
+	}
+	sb := FindSidebar(panes)
+	if sb == nil || sb.WindowID == window {
+		return nil
+	}
+	var target string
+	for _, p := range panes {
+		if p.WindowID == window && p.Active {
+			target = p.PaneID
+			break
+		}
+	}
+	if target == "" {
+		return nil // window vanished between the hook and now
+	}
+	args := append([]string{"join-pane", "-d"}, splitFlags(o)...)
+	args = append(args, "-s", sb.PaneID, "-t", target)
+	_, err = r.Run(args...)
+	return err
+}
+
 // Jump focuses target and brings the sidebar along into its window. When the
 // target is in another tmux session the client is switched there first.
 func Jump(r Runner, o Opts, target string) error {
