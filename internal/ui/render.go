@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,54 +13,55 @@ import (
 	"github.com/ssnxd/agentbar/internal/state"
 )
 
-// Group is one project heading with its sessions, most urgent first.
-type Group struct {
-	Name string
-	Rows []session.Session
-	rank int
-}
+// Layout: a flat list, one card per session, in tmux order.
+//
+//	 repo                              3h 12m
+//	 Session title, wrapped to at most
+//	 two lines
+//	 branch                         ● needs you
+//	 Bash touch /tmp/x                          (needs-you / error only)
+//
+//	 next card...
 
-// Groups buckets sessions by project. Rows sort by urgency then recency;
-// groups by their most urgent row then name.
-func Groups(ss []session.Session) []Group {
-	byName := map[string]*Group{}
-	var order []*Group
-	for _, s := range ss {
-		g := byName[s.Project]
-		if g == nil {
-			g = &Group{Name: s.Project, rank: 99}
-			byName[s.Project] = g
-			order = append(order, g)
+const maxTitleLines = 2
+
+// Ordered returns the visible sessions in display order: by tmux position
+// (session, window, pane) so the list matches your window order and never
+// reshuffles when a status changes; sessions outside tmux come last.
+func Ordered(ss []session.Session) []session.Session {
+	out := append([]session.Session(nil), ss...)
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.InTmux != b.InTmux {
+			return a.InTmux
 		}
-		g.Rows = append(g.Rows, s)
-		if r := rank(s.Status); r < g.rank {
-			g.rank = r
+		if a.TmuxSession != b.TmuxSession {
+			return a.TmuxSession < b.TmuxSession
 		}
-	}
-	for _, g := range order {
-		rows := g.Rows
-		sort.SliceStable(rows, func(i, j int) bool {
-			ri, rj := rank(rows[i].Status), rank(rows[j].Status)
-			if ri != rj {
-				return ri < rj
-			}
-			return rows[i].LastActivity.After(rows[j].LastActivity)
-		})
-	}
-	sort.SliceStable(order, func(i, j int) bool {
-		if order[i].rank != order[j].rank {
-			return order[i].rank < order[j].rank
+		if a.TmuxTarget != b.TmuxTarget {
+			return targetKey(a.TmuxTarget) < targetKey(b.TmuxTarget)
 		}
-		return order[i].Name < order[j].Name
+		return a.StartedAt.Before(b.StartedAt)
 	})
-	out := make([]Group, len(order))
-	for i, g := range order {
-		out[i] = *g
-	}
 	return out
 }
 
-// visible applies the filter text and returns the rows in display order.
+// targetKey turns "sess:12.3" into a sortable "000012.000003".
+func targetKey(t string) string {
+	i := strings.LastIndex(t, ":")
+	if i < 0 {
+		return t
+	}
+	parts := strings.SplitN(t[i+1:], ".", 2)
+	w, _ := strconv.Atoi(parts[0])
+	p := 0
+	if len(parts) == 2 {
+		p, _ = strconv.Atoi(parts[1])
+	}
+	return fmt.Sprintf("%06d.%06d", w, p)
+}
+
+// visible applies the filter text.
 func (m Model) visible() []session.Session {
 	var out []session.Session
 	q := strings.ToLower(strings.TrimSpace(m.filter))
@@ -76,37 +78,30 @@ func matches(s session.Session, q string) bool {
 	return strings.Contains(hay, q)
 }
 
-// ordered returns the visible rows flattened in the order they are drawn.
+// ordered returns the visible rows in the order they are drawn.
 func (m Model) ordered() []session.Session {
-	var out []session.Session
-	for _, g := range Groups(m.visible()) {
-		out = append(out, g.Rows...)
-	}
-	return out
+	return Ordered(m.visible())
 }
 
-func shortModel(model string) string {
-	model = strings.TrimPrefix(model, "claude-")
-	if i := strings.Index(model, "-"); i > 0 {
-		return model[:i]
-	}
-	return model
-}
-
-func age(now, t time.Time) string {
-	if t.IsZero() {
+// uptime formats how long a session has been running.
+func uptime(now, started time.Time) string {
+	if started.IsZero() {
 		return ""
 	}
-	d := now.Sub(t)
+	d := now.Sub(started)
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
 	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %02dm", hours, mins)
 	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
+		return fmt.Sprintf("%dm", mins)
 	}
 }
 
@@ -120,6 +115,23 @@ func truncate(s string, n int) string {
 	return ansi.Truncate(s, n-1, "") + "…"
 }
 
+// wrapLines word-wraps s to width, at most max lines; the last line is
+// truncated with an ellipsis when text remains.
+func wrapLines(s string, width, max int) []string {
+	if width <= 0 || s == "" {
+		return nil
+	}
+	lines := strings.Split(ansi.Wordwrap(s, width, ""), "\n")
+	if len(lines) > max {
+		rest := strings.Join(lines[max-1:], " ")
+		lines = append(lines[:max-1], truncate(rest, width))
+	}
+	for i, l := range lines {
+		lines[i] = truncate(l, width) // a single word longer than width
+	}
+	return lines
+}
+
 // pad right-fills s with spaces to width w (in cells) using st for the fill
 // so a selection band covers the full line.
 func pad(s string, w int, st lipgloss.Style) string {
@@ -128,6 +140,22 @@ func pad(s string, w int, st lipgloss.Style) string {
 		return s
 	}
 	return s + st.Render(strings.Repeat(" ", gap))
+}
+
+// twoSided renders left and right text on one line of width w, with the
+// right part right-aligned and the left part truncated to fit.
+func twoSided(left, right string, ls, rs, fill lipgloss.Style, w int) string {
+	rw := ansi.StringWidth(right)
+	lw := w - 1 - rw - 2 // leading space, gap of two
+	if lw < 4 {
+		lw = 4
+	}
+	left = truncate(left, lw)
+	gap := w - 1 - ansi.StringWidth(left) - rw
+	if gap < 1 {
+		gap = 1
+	}
+	return fill.Render(" ") + ls.Render(left) + fill.Render(strings.Repeat(" ", gap)) + rs.Render(right)
 }
 
 // line is one rendered row of the body with the session it belongs to.
@@ -161,56 +189,47 @@ func (m Model) header() string {
 	return left + sDim.Render(strings.Repeat("─", fill)) + " " + right
 }
 
-// body renders every group and row into lines, unscrolled.
+// body renders every card into lines, unscrolled.
 func (m Model) body() []line {
 	var out []line
 	w := m.width
 	narrow := w < 30
-	for _, g := range Groups(m.visible()) {
-		out = append(out, line{text: ""})
-		out = append(out, line{text: " " + sGroup.Render(truncate(g.Name, w-2))})
-		for _, s := range g.Rows {
-			selected := s.ID == m.selected
-			lk := look(s.Status)
-			icon := lk.icon
-			if s.Status == state.StatusWorking {
-				icon = spinnerFrames[m.tick%len(spinnerFrames)]
-			}
-			// line 1: "  ● needs you  title"
-			prefix := sel(sText, selected).Render("  ") + sel(lk.style, selected).Render(icon+" "+fmt.Sprintf("%-9s", lk.label)) + sel(sText, selected).Render("  ")
-			title := truncate(s.Title, w-ansi.StringWidth(prefix)-1)
-			l1 := prefix + sel(sText, selected).Render(title)
-			out = append(out, line{text: pad(l1, w, sel(sText, selected)), id: s.ID})
-			if narrow {
-				continue
-			}
-			// line 2: "    work:2.1 · fable · fix/auth      12m"
-			var parts []string
-			if s.InTmux && s.TmuxTarget != "" {
-				parts = append(parts, s.TmuxTarget)
-			} else {
-				parts = append(parts, "not in tmux")
-			}
-			if s.Model != "" {
-				parts = append(parts, shortModel(s.Model))
-			}
-			if s.Branch != "" {
-				parts = append(parts, s.Branch)
-			}
-			ag := age(m.now, s.LastActivity)
-			left := truncate(strings.Join(parts, " · "), w-4-ansi.StringWidth(ag)-2)
-			gap := w - 4 - ansi.StringWidth(left) - ansi.StringWidth(ag) - 1
-			if gap < 1 {
-				gap = 1
-			}
-			l2 := sel(sText, selected).Render("    ") + sel(sDim, selected).Render(left) + sel(sText, selected).Render(strings.Repeat(" ", gap)) + sel(sDim, selected).Render(ag)
-			out = append(out, line{text: pad(l2, w, sel(sText, selected)), id: s.ID})
-			// line 3: detail for rows that need attention
-			if (s.Status == state.StatusNeedsYou || s.Status == state.StatusError) && s.Detail != "" {
-				l3 := sel(sText, selected).Render("    ") + sel(sSub, selected).Render(truncate(s.Detail, w-5))
-				out = append(out, line{text: pad(l3, w, sel(sText, selected)), id: s.ID})
-			}
+	for _, s := range m.ordered() {
+		selected := s.ID == m.selected
+		fill := sel(sText, selected)
+		lk := look(s.Status)
+		icon := lk.icon
+		if s.Status == state.StatusWorking {
+			icon = spinnerFrames[m.tick%len(spinnerFrames)]
 		}
+		status := icon + " " + lk.label
+		add := func(text string) {
+			out = append(out, line{text: pad(text, w, fill), id: s.ID})
+		}
+
+		if narrow {
+			add(fill.Render(" ") + sel(lk.style, selected).Render(icon) + fill.Render(" ") + sel(sText, selected).Render(truncate(s.Title, w-3)))
+			out = append(out, line{text: ""})
+			continue
+		}
+
+		// 1: repo (left) · uptime (right)
+		add(twoSided(s.Project, uptime(m.now, s.StartedAt), sel(sGroup, selected), sel(sDim, selected), fill, w))
+		// 2..3: title, wrapped
+		for _, t := range wrapLines(s.Title, w-2, maxTitleLines) {
+			add(fill.Render(" ") + sel(sText, selected).Render(t))
+		}
+		// branch (left) · status (right)
+		branch := s.Branch
+		if branch == "" {
+			branch = "no branch"
+		}
+		add(twoSided(branch, status, sel(sDim, selected), sel(lk.style, selected), fill, w))
+		// detail for rows that need attention
+		if (s.Status == state.StatusNeedsYou || s.Status == state.StatusError) && s.Detail != "" {
+			add(fill.Render(" ") + sel(sSub, selected).Render(truncate(s.Detail, w-2)))
+		}
+		out = append(out, line{text: ""})
 	}
 	if len(out) == 0 {
 		out = append(out, line{text: ""}, line{text: sDim.Render("  no claude sessions running")})
@@ -220,6 +239,8 @@ func (m Model) body() []line {
 		case !m.connected && m.sessions == nil && m.width > 0 && m.snaps != nil:
 			out[1].text = sDim.Render("  connecting…")
 		}
+	} else {
+		out = append([]line{{text: ""}}, out...)
 	}
 	return out
 }
@@ -259,13 +280,13 @@ func renderHints(hs []hint, w int) string {
 
 var helpRows = []hint{
 	{"j / k", "move"},
-	{"enter", "jump to pane (sidebar follows)"},
+	{"enter", "jump to pane"},
 	{"tab", "next needs-you"},
 	{"y", "accept permission prompt"},
 	{"x", "kill session (asks y/n)"},
 	{"/", "filter; esc clears"},
 	{"r", "refresh now"},
-	{"q", "close sidebar"},
+	{"q", "close every sidebar"},
 }
 
 func (m Model) footer() string {
@@ -340,7 +361,7 @@ func Render(m Model) string {
 	return b.String()
 }
 
-// clampScroll keeps the selected row's lines inside the viewport.
+// clampScroll keeps the selected card's lines inside the viewport.
 func clampScroll(lines []line, selected string, scroll, bodyH int) int {
 	first, last := -1, -1
 	for i, l := range lines {
@@ -359,10 +380,6 @@ func clampScroll(lines []line, selected string, scroll, bodyH int) int {
 	}
 	if first < 0 {
 		return scroll
-	}
-	// include the group heading above the first row of a group
-	if first > 0 && lines[first-1].id == "" {
-		first--
 	}
 	if last >= scroll+bodyH {
 		scroll = last - bodyH + 1
