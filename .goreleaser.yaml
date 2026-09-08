@@ -1,15 +1,15 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
-project_name: workflow
+project_name: agentbar
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - main: ./cmd/workflow
-    binary: workflow
+  - main: ./cmd/agentbar
+    binary: agentbar
     env:
       - CGO_ENABLED=0
     goos:
@@ -36,7 +36,7 @@ changelog:
 release:
   github:
     owner: ssnxd
-    name: workflow
+    name: agentbar
   footer: |
     ---
-    Requires tmux >= 3.2 and the Claude Code CLI in PATH. Run `workflow doctor` after install.
+    A tmux sidebar for running Claude Code sessions. Requires tmux >= 3.2. Run `agentbar install` then `agentbar doctor`.

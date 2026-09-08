@@ -1,14 +1,14 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
-BIN     := workflow
+BIN     := agentbar
 
 .PHONY: build install test test-race vet fmt-check vuln lint ci clean release-check help
 
-build: ## Build ./bin/workflow
-	go build -ldflags '$(LDFLAGS)' -o bin/$(BIN) ./cmd/workflow
+build: ## Build ./bin/agentbar
+	go build -ldflags '$(LDFLAGS)' -o bin/$(BIN) ./cmd/agentbar
 
-install: ## Build and install into $$GOPATH/bin
-	go build -ldflags '$(LDFLAGS)' -o $(shell go env GOPATH)/bin/$(BIN) ./cmd/workflow
+install: ## Build and install into ~/.local/bin
+	go build -ldflags '$(LDFLAGS)' -o $(HOME)/.local/bin/$(BIN) ./cmd/agentbar
 
 test: ## Run all tests (tmux integration tests skip when tmux is absent)
 	go test ./...

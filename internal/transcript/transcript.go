@@ -2,7 +2,7 @@
 // machine but are NOT managed by workflow — sessions the user started
 // themselves in other terminals. The TUI surfaces them read-only, clearly
 // marked as external.
-package external
+package transcript
 
 import (
 	"bytes"
