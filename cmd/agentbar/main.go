@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/ssnxd/agentbar/internal/cli"
+	"github.com/ssnxd/agentbar/internal/ui"
 )
 
 // version is stamped by the build (-ldflags "-X main.version=v1.2.3").
@@ -19,6 +20,8 @@ func main() {
 		args = args[1:]
 	}
 	switch cmd {
+	case "ui":
+		ui.Run()
 	case "event":
 		cli.Event(args)
 	case "toggle":
