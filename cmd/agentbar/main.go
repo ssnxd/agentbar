@@ -4,6 +4,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/ssnxd/agentbar/internal/cli"
 )
 
 // version is stamped by the build (-ldflags "-X main.version=v1.2.3").
@@ -17,6 +19,8 @@ func main() {
 		args = args[1:]
 	}
 	switch cmd {
+	case "event":
+		cli.Event(args)
 	case "version", "-v", "--version":
 		fmt.Println("agentbar", version)
 	case "help", "-h", "--help":
