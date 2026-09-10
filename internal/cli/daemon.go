@@ -13,8 +13,13 @@ import (
 // detached by openAll or by a viewer that finds no daemon).
 func Daemon() {
 	r := tmuxctl.Exec{}
+	pub := &daemon.Publisher{}
 	err := daemon.Serve(context.Background(), daemon.SocketPath(),
-		func() daemon.Snapshot { return daemon.Build(r) }, daemon.Interval, daemon.IdleExit)
+		func() daemon.Snapshot {
+			s := daemon.Build(r)
+			pub.Publish(r, s)
+			return s
+		}, daemon.Interval, daemon.IdleExit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agentbar daemon:", err)
 		os.Exit(1)
