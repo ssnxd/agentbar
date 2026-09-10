@@ -21,6 +21,10 @@ type Payload struct {
 	NotificationType string         `json:"notification_type"`
 	PermissionMode   string         `json:"permission_mode"`
 	Source           string         `json:"source"` // SessionStart: startup | resume | clear | compact | fork
+	// Set on SubagentStart/SubagentStop and on any event that fires inside a
+	// subagent (its tool calls and permission prompts).
+	AgentID   string `json:"agent_id"`
+	AgentType string `json:"agent_type"`
 }
 
 // Parse reads one hook payload. Input is capped at 1MB: tool_input can carry

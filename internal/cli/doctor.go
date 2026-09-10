@@ -63,7 +63,8 @@ func Doctor() {
 	case installed != exe:
 		check(false, "hooks point at "+installed, "run: agentbar install  (migrates to "+exe+")")
 	default:
-		check(true, "hooks installed", "")
+		missing := hooks.Missing(settings, exe)
+		check(len(missing) == 0, "hooks installed", "missing "+strings.Join(missing, ", ")+"; run: agentbar install")
 	}
 
 	check(os.MkdirAll(paths.StateDir(), 0o755) == nil, "state dir "+paths.StateDir(), "")

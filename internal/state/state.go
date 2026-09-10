@@ -49,11 +49,17 @@ func safe(id string) string {
 
 // Write stores r atomically (temp file + rename), creating dir if needed.
 func Write(dir string, r Record) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
 	b, err := json.Marshal(r)
 	if err != nil {
+		return err
+	}
+	return writeAtomic(dir, path(dir, r.SessionID), b)
+}
+
+// writeAtomic writes b to dst via a temp file in dir and a rename, creating
+// dir if needed.
+func writeAtomic(dir, dst string, b []byte) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -69,7 +75,7 @@ func Write(dir string, r Record) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), path(dir, r.SessionID))
+	return os.Rename(tmp.Name(), dst)
 }
 
 // Read returns the record for id, or false if missing or unreadable.

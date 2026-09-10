@@ -67,6 +67,18 @@ func TestBuild(t *testing.T) {
 			}
 			return transcript.Info{}
 		},
+		Agents: map[string][]state.Agent{
+			"a": {
+				{SessionID: "a", AgentID: "x1", Type: "Explore", Tool: "Grep", Detail: "Grep hooks", StartedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-time.Minute)},
+				{SessionID: "a", AgentID: "x2", Type: "general-purpose", StartedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute)},
+			},
+		},
+		AgentMeta: func(cwd, sid, aid string) transcript.Meta {
+			if sid == "a" && aid == "x1" {
+				return transcript.Meta{Description: "Map hook payloads", Model: "sonnet"}
+			}
+			return transcript.Meta{}
+		},
 		Now: now,
 	}
 	ss := Build(d)
@@ -74,6 +86,17 @@ func TestBuild(t *testing.T) {
 		t.Fatalf("got %d sessions", len(ss))
 	}
 	a, b, c := ss[0], ss[1], ss[2]
+
+	if len(a.Agents) != 2 || len(b.Agents) != 0 {
+		t.Fatalf("agents: a=%+v b=%+v", a.Agents, b.Agents)
+	}
+	x1, x2 := a.Agents[0], a.Agents[1]
+	if x1.ID != "x1" || x1.Type != "Explore" || x1.Description != "Map hook payloads" || x1.Model != "sonnet" || x1.Tool != "Grep" || x1.Detail != "Grep hooks" || !x1.StartedAt.Equal(now.Add(-2*time.Minute)) {
+		t.Errorf("x1: %+v", x1)
+	}
+	if x2.ID != "x2" || x2.Type != "general-purpose" || x2.Description != "" {
+		t.Errorf("x2 (no meta yet): %+v", x2)
+	}
 
 	if a.Project != "code/app" || b.Project != "other/app" || c.Project != "site" {
 		t.Errorf("projects: %q %q %q", a.Project, b.Project, c.Project)

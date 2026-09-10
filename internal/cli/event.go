@@ -36,26 +36,62 @@ func Event(args []string) {
 	}
 	o := hooks.Map(p, *status)
 	dir := paths.StateDir()
-	switch {
-	case o.Ignore:
+	now := time.Now()
+	if o.Ignore {
 		return
-	case o.Delete:
+	}
+	if o.Delete {
 		if err := state.Delete(dir, p.SessionID); err != nil {
 			logf("event: delete %s: %v", p.SessionID, err)
 		}
-	default:
-		err := state.Write(dir, state.Record{
-			SessionID: p.SessionID,
-			CWD:       p.CWD,
-			Status:    o.Status,
-			Detail:    o.Detail,
-			Tool:      o.Tool,
-			Event:     p.HookEventName,
-			UpdatedAt: time.Now(),
-		})
-		if err != nil {
-			logf("event: write %s: %v", p.SessionID, err)
+		if err := state.DeleteSessionAgents(dir, p.SessionID); err != nil {
+			logf("event: delete agents of %s: %v", p.SessionID, err)
 		}
+		return
+	}
+	if o.Agent != nil {
+		applyAgent(dir, p.SessionID, *o.Agent, now)
+	}
+	if o.Status == "" {
+		return
+	}
+	err = state.Write(dir, state.Record{
+		SessionID: p.SessionID,
+		CWD:       p.CWD,
+		Status:    o.Status,
+		Detail:    o.Detail,
+		Tool:      o.Tool,
+		Event:     p.HookEventName,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		logf("event: write %s: %v", p.SessionID, err)
+	}
+}
+
+// applyAgent creates, updates, or removes one subagent record. Hooks are
+// async and can arrive out of order, so an update from an agent we never saw
+// start creates the record, and every event carries the type itself.
+func applyAgent(dir, sid string, c hooks.AgentChange, now time.Time) {
+	if c.Done {
+		if err := state.DeleteAgent(dir, sid, c.ID); err != nil {
+			logf("event: delete agent %s/%s: %v", sid, c.ID, err)
+		}
+		return
+	}
+	a, ok := state.ReadAgent(dir, sid, c.ID)
+	if !ok {
+		a = state.Agent{SessionID: sid, AgentID: c.ID, StartedAt: now}
+	}
+	if c.Type != "" {
+		a.Type = c.Type
+	}
+	if c.Tool != "" {
+		a.Tool, a.Detail = c.Tool, c.Detail
+	}
+	a.UpdatedAt = now
+	if err := state.WriteAgent(dir, a); err != nil {
+		logf("event: write agent %s/%s: %v", sid, c.ID, err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ssnxd/agentbar/internal/state"
@@ -36,6 +37,8 @@ func Entries(exe string) map[string][]hookGroup {
 		"SessionStart":      ev(false),
 		"UserPromptSubmit":  ev(false),
 		"PreToolUse":        ev(true), // high frequency: async, observe-only
+		"SubagentStart":     ev(true), // observe-only
+		"SubagentStop":      ev(true),
 		"PermissionRequest": ev(false),
 		"Stop":              ev(false),
 		"StopFailure":       ev(false),
@@ -64,6 +67,35 @@ func InstalledExe(settings []byte) string {
 		return ""
 	}
 	return string(m[1])
+}
+
+// Missing returns the events, in sorted order, for which settings lacks any
+// of agentbar's hook groups for exe. Empty means the install is complete;
+// an older install reports the events added since.
+func Missing(settings []byte, exe string) []string {
+	var root map[string]any
+	_ = json.Unmarshal(settings, &root)
+	hooks, _ := root["hooks"].(map[string]any)
+	var out []string
+	for event, groups := range Entries(exe) {
+		existing, _ := hooks[event].([]any)
+		for _, g := range groups {
+			want := toAny(g)
+			found := false
+			for _, e := range existing {
+				if jsonEqual(e, want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				out = append(out, event)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func isOurs(group any, exe string) bool {

@@ -45,6 +45,33 @@ func TestMapTable(t *testing.T) {
 	}
 }
 
+func TestMapSubagentEvents(t *testing.T) {
+	in := map[string]any{"command": "ls"}
+	o := Map(Payload{HookEventName: "SubagentStart", AgentID: "a1", AgentType: "Explore"}, "")
+	if o.Ignore || o.Status != "" || o.Agent == nil || o.Agent.ID != "a1" || o.Agent.Type != "Explore" || o.Agent.Done {
+		t.Errorf("SubagentStart: %+v", o)
+	}
+	o = Map(Payload{HookEventName: "SubagentStop", AgentID: "a1", AgentType: "Explore"}, "")
+	if o.Ignore || o.Status != "" || o.Agent == nil || o.Agent.ID != "a1" || !o.Agent.Done {
+		t.Errorf("SubagentStop: %+v", o)
+	}
+	// A tool call inside a subagent updates the agent, not the session.
+	o = Map(Payload{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: in, AgentID: "a1", AgentType: "Explore"}, "")
+	if o.Ignore || o.Status != "" || o.Agent == nil || o.Agent.Tool != "Bash" || o.Agent.Detail != "Bash ls" || o.Agent.Type != "Explore" {
+		t.Errorf("PreToolUse in agent: %+v", o)
+	}
+	// A permission prompt inside a subagent needs the user just the same,
+	// and names the agent.
+	o = Map(Payload{HookEventName: "PermissionRequest", ToolName: "Bash", ToolInput: in, AgentID: "a1", AgentType: "Explore"}, "")
+	if o.Status != state.StatusNeedsYou || o.Detail != "Explore · Bash ls" || o.Agent == nil || o.Agent.Detail != "Bash ls" {
+		t.Errorf("PermissionRequest in agent: %+v", o)
+	}
+	// Main-thread events carry no agent change.
+	if o := Map(Payload{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: in}, ""); o.Agent != nil {
+		t.Errorf("main thread: %+v", o)
+	}
+}
+
 func TestSummarize(t *testing.T) {
 	long := strings.Repeat("x", 200)
 	if got := Summarize("Bash", map[string]any{"command": long}); len([]rune(got)) > 80+len("Bash ") {
@@ -72,6 +99,10 @@ func TestParsePayload(t *testing.T) {
 	}
 	if _, err := Parse(strings.NewReader("")); err == nil {
 		t.Error("empty stdin must be an error")
+	}
+	sub := `{"session_id":"s1","hook_event_name":"SubagentStart","agent_id":"abc","agent_type":"Explore"}`
+	if p, err := Parse(strings.NewReader(sub)); err != nil || p.AgentID != "abc" || p.AgentType != "Explore" {
+		t.Errorf("subagent fields: %+v %v", p, err)
 	}
 }
 
@@ -101,7 +132,7 @@ func TestMergeIsIdempotentAndPreservesForeignHooks(t *testing.T) {
 	if len(stop) != 2 {
 		t.Fatalf("Stop should have osascript + agentbar, got %d", len(stop))
 	}
-	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"} {
+	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd", "SubagentStart", "SubagentStop"} {
 		if _, ok := hooks[ev]; !ok {
 			t.Errorf("missing %s", ev)
 		}
@@ -150,6 +181,24 @@ func TestMergeIntoEmptySettings(t *testing.T) {
 	}
 	if _, ok := s["hooks"].(map[string]any)["Stop"]; !ok {
 		t.Error("hooks missing")
+	}
+}
+
+func TestMissing(t *testing.T) {
+	const exe = "/x/agentbar"
+	full, _, _ := Merge([]byte(userSettings), exe)
+	if got := Missing(full, exe); len(got) != 0 {
+		t.Errorf("complete install reports missing %v", got)
+	}
+	// an install from before subagent support lacks the two agent events
+	old := strings.ReplaceAll(string(full), `"SubagentStart"`, `"SubagentStartX"`)
+	old = strings.ReplaceAll(old, `"SubagentStop"`, `"SubagentStopX"`)
+	got := Missing([]byte(old), exe)
+	if len(got) != 2 || got[0] != "SubagentStart" || got[1] != "SubagentStop" {
+		t.Errorf("got %v", got)
+	}
+	if got := Missing([]byte(userSettings), exe); len(got) != len(Entries(exe)) {
+		t.Errorf("nothing installed: got %v", got)
 	}
 }
 

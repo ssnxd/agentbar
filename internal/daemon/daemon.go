@@ -57,7 +57,9 @@ func Build(r tmuxctl.Runner) Snapshot {
 		}
 	}
 	states := state.ReadAll(paths.StateDir())
+	agents := state.ReadAgents(paths.StateDir())
 	state.Sweep(paths.StateDir(), live, sweepAge, now)
+	state.SweepAgents(paths.StateDir(), live, sweepAge, now)
 
 	panes := map[string]tmuxctl.Pane{}
 	ps, perr := tmuxctl.ListPanes(r)
@@ -67,12 +69,16 @@ func Build(r tmuxctl.Runner) Snapshot {
 	ss := session.Build(session.Deps{
 		Registry: interactive,
 		States:   states,
+		Agents:   agents,
 		Transcript: func(cwd, id string) transcript.Info {
 			p := transcript.Newest(paths.ProjectsDir(), cwd, id)
 			if p == "" {
 				return transcript.Info{}
 			}
 			return transcript.Tail(p)
+		},
+		AgentMeta: func(cwd, id, agentID string) transcript.Meta {
+			return transcript.AgentMeta(transcript.Newest(paths.ProjectsDir(), cwd, id), agentID)
 		},
 		Now: now,
 	})

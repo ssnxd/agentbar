@@ -130,6 +130,25 @@ func TestNewestFindsSessionUnderAnotherProjectDir(t *testing.T) {
 	}
 }
 
+func TestAgentMeta(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "sid.jsonl")
+	_ = os.WriteFile(tp, []byte("{}\n"), 0o644)
+	sub := filepath.Join(dir, "sid", "subagents")
+	_ = os.MkdirAll(sub, 0o755)
+	_ = os.WriteFile(filepath.Join(sub, "agent-abc.meta.json"), []byte(`{"agentType":"general-purpose","description":"Implement Task 2 (Twilio service)","toolUseId":"toolu_1","spawnDepth":1,"requestShape":"background","model":"sonnet"}`), 0o644)
+	m := AgentMeta(tp, "abc")
+	if m.Description != "Implement Task 2 (Twilio service)" || m.Model != "sonnet" {
+		t.Errorf("got %+v", m)
+	}
+	if m := AgentMeta(tp, "missing"); m.Description != "" {
+		t.Errorf("missing meta must be empty, got %+v", m)
+	}
+	if m := AgentMeta("", "abc"); m.Description != "" {
+		t.Errorf("no transcript must be empty, got %+v", m)
+	}
+}
+
 func TestMungeProjectDir(t *testing.T) {
 	if got := MungeProjectDir("/Users/x/code/my.app"); got != "-Users-x-code-my-app" {
 		t.Errorf("munge = %q", got)

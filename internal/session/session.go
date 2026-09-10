@@ -48,13 +48,29 @@ type Session struct {
 	TmuxWindowID string
 	TmuxPaneID   string
 	TmuxTarget   string // "work:2.1" display label, filled in by the UI from tmux
+
+	Agents []Agent // running subagents, oldest first
+}
+
+// Agent is one running subagent of a session.
+type Agent struct {
+	ID          string
+	Type        string // Explore, Plan, general-purpose, a custom agent name
+	Description string // Claude's short task label, once its meta file exists
+	Model       string
+	Tool        string // last tool called
+	Detail      string // last tool summary, "Bash go test ./..."
+	StartedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Deps are the inputs Build merges.
 type Deps struct {
 	Registry   []registry.Entry
 	States     map[string]state.Record
+	Agents     map[string][]state.Agent // by session id
 	Transcript func(cwd, sessionID string) transcript.Info
+	AgentMeta  func(cwd, sessionID, agentID string) transcript.Meta
 	Now        time.Time
 }
 
@@ -107,6 +123,17 @@ func Build(d Deps) []Session {
 		s.LastActivity = latest(e.StartedAt, ti.LastActivity)
 		if has {
 			s.LastActivity = latest(s.LastActivity, rec.UpdatedAt)
+		}
+		for _, a := range d.Agents[e.SessionID] {
+			ag := Agent{ID: a.AgentID, Type: a.Type, Tool: a.Tool, Detail: a.Detail, StartedAt: a.StartedAt, UpdatedAt: a.UpdatedAt}
+			if d.AgentMeta != nil {
+				m := d.AgentMeta(e.CWD, e.SessionID, a.AgentID)
+				ag.Description, ag.Model = m.Description, m.Model
+				if ag.Type == "" {
+					ag.Type = m.Type
+				}
+			}
+			s.Agents = append(s.Agents, ag)
 		}
 		out = append(out, s)
 	}
