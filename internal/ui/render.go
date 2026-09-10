@@ -17,17 +17,38 @@ import (
 // the session running in this sidebar's own window carries a bar in the
 // left gutter.
 //
-//	▌repo                              3h 12m
+//	▌repo · branch              ● needs you 3m
 //	▌Session title, wrapped to at most
 //	▌two lines
-//	▌branch                         ● needs you
-//	 Bash touch /tmp/x                          (needs-you / error only)
-//
+//	▌Bash touch /tmp/x                          (what it needs you for, or
+//	 ↳ Map hook payloads                   Grep   what it is doing right now)
+//	                                            (one per running subagent)
 //	 next card...
+//
+// Status leads, top right, with how long the session has sat there. A
+// working session shows no age: it is busy now.
 
 const hereMark = "▌"
 
 const maxTitleLines = 2
+
+// Subagent rows: at most maxAgentLines per card, then "+N more".
+const (
+	agentMark     = "↳ "
+	maxAgentLines = 4
+)
+
+// agentLabel is what a subagent row says: Claude's task description once
+// its meta file exists, else the agent type.
+func agentLabel(a session.Agent) string {
+	if a.Description != "" {
+		return a.Description
+	}
+	if a.Type != "" {
+		return a.Type
+	}
+	return "agent"
+}
 
 // Ordered returns the visible sessions in display order: by tmux position
 // (session, window, pane) so the list matches your window order and never
@@ -87,26 +108,33 @@ func (m Model) ordered() []session.Session {
 	return Ordered(m.visible())
 }
 
-// uptime formats how long a session has been running.
-func uptime(now, started time.Time) string {
-	if started.IsZero() {
+// age is how long ago t was, coarse: "5m", "3h", "1d"; empty under a
+// minute (it just happened) or for a zero time.
+func age(now, t time.Time) string {
+	if t.IsZero() {
 		return ""
 	}
-	d := now.Sub(started)
-	if d < 0 {
-		d = 0
-	}
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	mins := int(d.Minutes()) % 60
+	d := now.Sub(t)
 	switch {
-	case days > 0:
-		return fmt.Sprintf("%dd %dh", days, hours)
-	case hours > 0:
-		return fmt.Sprintf("%dh %02dm", hours, mins)
-	default:
-		return fmt.Sprintf("%dm", mins)
+	case d < time.Minute:
+		return ""
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
+	return fmt.Sprintf("%dd", int(d.Hours())/24)
+}
+
+// repoBranch renders "repo · branch" to fit in maxW cells: the branch gives
+// way first, then the repo.
+func repoBranch(s session.Session, maxW int, selected bool) string {
+	repo := truncate(s.Project, maxW)
+	rest := maxW - ansi.StringWidth(repo) - 3
+	if s.Branch == "" || rest < 4 {
+		return sel(sGroup, selected).Render(repo)
+	}
+	return sel(sGroup, selected).Render(repo) + sel(sDim, selected).Render(" · "+truncate(s.Branch, rest))
 }
 
 func truncate(s string, n int) string {
@@ -146,21 +174,33 @@ func pad(s string, w int, st lipgloss.Style) string {
 	return s + st.Render(strings.Repeat(" ", gap))
 }
 
-// twoSided renders left and right text on one line of width w after a
-// one-cell gutter, with the right part right-aligned and the left part
-// truncated to fit.
-func twoSided(gutter, left, right string, ls, rs, fill lipgloss.Style, w int) string {
+// twoSided renders left and right text on one line of width w, with the
+// right part right-aligned and the left part truncated to fit.
+func twoSided(left, right string, ls, rs, fill lipgloss.Style, w int) string {
 	rw := ansi.StringWidth(right)
-	lw := w - 1 - rw - 2 // gutter, gap of two
+	lw := w - rw - 2 // gap of two
 	if lw < 4 {
 		lw = 4
 	}
 	left = truncate(left, lw)
-	gap := w - 1 - ansi.StringWidth(left) - rw
+	gap := w - ansi.StringWidth(left) - rw
 	if gap < 1 {
 		gap = 1
 	}
-	return gutter + ls.Render(left) + fill.Render(strings.Repeat(" ", gap)) + rs.Render(right)
+	return ls.Render(left) + fill.Render(strings.Repeat(" ", gap)) + rs.Render(right)
+}
+
+// fmtTokens renders a context size compactly: "950", "142k", "1.2M".
+func fmtTokens(n int64) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n < 1000:
+		return fmt.Sprint(n)
+	case n < 1_000_000:
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	}
+	return fmt.Sprintf("%.1fM", float64(n)/1e6)
 }
 
 // line is one rendered row of the body with the session it belongs to.
@@ -177,7 +217,7 @@ func (m Model) header() string {
 			hot++
 		}
 	}
-	left := sTitle.Render(" claude ")
+	left := sTitle.Render("  claude ")
 	var right string
 	switch {
 	case n == 0:
@@ -189,7 +229,7 @@ func (m Model) header() string {
 	}
 	fill := m.width - ansi.StringWidth(left) - ansi.StringWidth(right) - 1
 	if fill < 0 {
-		return truncate(left+right, m.width)
+		return truncate(left+right, m.width-1)
 	}
 	return left + sDim.Render(strings.Repeat("─", fill)) + " " + right
 }
@@ -198,8 +238,14 @@ func (m Model) header() string {
 func (m Model) body() []line {
 	var out []line
 	w := m.width
+	// column 1 is the here-marker gutter, column 2 a space, and the last
+	// column a margin; text lives in the cw cells between.
+	cw := w - 3
+	if cw < 8 {
+		cw = 8
+	}
 	narrow := w < 30
-	for _, s := range m.ordered() {
+	for i, s := range m.ordered() {
 		selected := s.ID == m.selected
 		fill := sel(sText, selected)
 		lk := look(s.Status)
@@ -208,46 +254,74 @@ func (m Model) body() []line {
 			icon = spinnerFrames[m.tick%len(spinnerFrames)]
 		}
 		status := icon + " " + lk.label
-		add := func(text string) {
-			out = append(out, line{text: pad(text, w, fill), id: s.ID})
+		switch {
+		case s.Status == state.StatusWorking:
+			if t := fmtTokens(s.ContextTokens); t != "" {
+				status += " · " + t
+			}
+		default:
+			if a := age(m.now, s.LastActivity); a != "" {
+				status += " " + a
+			}
 		}
 		// gutter: a bar on the session that lives in this sidebar's window
 		gutter := fill.Render(" ")
 		if m.here != "" && s.TmuxPaneID == m.here {
 			gutter = sel(sHere, selected).Render(hereMark)
 		}
+		add := func(text string) {
+			out = append(out, line{text: pad(gutter+fill.Render(" ")+text, w, fill), id: s.ID})
+		}
 
 		if narrow {
-			add(gutter + sel(lk.style, selected).Render(icon) + fill.Render(" ") + sel(sText, selected).Render(truncate(s.Title, w-3)))
+			add(sel(lk.style, selected).Render(icon) + fill.Render(" ") + sel(sText, selected).Render(truncate(s.Title, cw-2)))
 			out = append(out, line{text: ""})
 			continue
 		}
 
-		// 1: repo (left) · uptime (right)
-		add(twoSided(gutter, s.Project, uptime(m.now, s.StartedAt), sel(sGroup, selected), sel(sDim, selected), fill, w))
+		// 1: number, repo · branch (left), status with idle age or context (right)
+		num := fmt.Sprintf("%d ", i+1)
+		sw := ansi.StringWidth(status)
+		left := sel(sDim, selected).Render(num) + repoBranch(s, cw-len(num)-sw-2, selected)
+		gap := cw - ansi.StringWidth(left) - sw
+		if gap < 1 {
+			gap = 1
+		}
+		add(left + fill.Render(strings.Repeat(" ", gap)) + sel(lk.style, selected).Render(status))
 		// 2..3: title, wrapped
-		for _, t := range wrapLines(s.Title, w-2, maxTitleLines) {
-			add(gutter + sel(sText, selected).Render(t))
+		for _, t := range wrapLines(s.Title, cw, maxTitleLines) {
+			add(sel(sText, selected).Render(t))
 		}
-		// branch (left) · status (right)
-		branch := s.Branch
-		if branch == "" {
-			branch = "no branch"
+		// live line: what it needs you for, or what it is doing right now
+		switch s.Status {
+		case state.StatusNeedsYou, state.StatusError:
+			if s.Detail != "" {
+				add(sel(sSub, selected).Render(truncate(s.Detail, cw)))
+			}
+		case state.StatusWorking:
+			if s.Detail != "" {
+				add(sel(sDim, selected).Render(truncate(s.Detail, cw)))
+			}
 		}
-		add(twoSided(gutter, branch, status, sel(sDim, selected), sel(lk.style, selected), fill, w))
-		// detail for rows that need attention
-		if (s.Status == state.StatusNeedsYou || s.Status == state.StatusError) && s.Detail != "" {
-			add(gutter + sel(sSub, selected).Render(truncate(s.Detail, w-2)))
+		// running subagents: "↳ what it is doing" (left) · last tool (right)
+		for i, a := range s.Agents {
+			if i == maxAgentLines && len(s.Agents) > maxAgentLines {
+				add(sel(sDim, selected).Render(fmt.Sprintf("%s+%d more", agentMark, len(s.Agents)-maxAgentLines)))
+				break
+			}
+			add(twoSided(agentMark+agentLabel(a), a.Tool, sel(sSub, selected), sel(sDim, selected), fill, cw))
 		}
 		out = append(out, line{text: ""})
 	}
 	if len(out) == 0 {
-		out = append(out, line{text: ""}, line{text: sDim.Render("  no claude sessions running")})
+		out = append(out, line{text: ""}, line{text: sSub.Render("  No sessions yet.")}, line{text: sDim.Render("  Start claude in any pane;")}, line{text: sDim.Render("  it shows up here.")})
 		switch {
 		case m.filter != "":
-			out[1].text = sDim.Render("  nothing matches " + m.filter)
+			out = out[:2]
+			out[1].text = sDim.Render("  Nothing matches " + m.filter)
 		case !m.connected && m.sessions == nil && m.width > 0 && m.snaps != nil:
-			out[1].text = sDim.Render("  connecting…")
+			out = out[:2]
+			out[1].text = sDim.Render("  Connecting…")
 		}
 	} else {
 		out = append([]line{{text: ""}}, out...)
@@ -276,7 +350,7 @@ func renderHints(hs []hint, w int) string {
 		if i > 0 {
 			width += 2
 		}
-		if used+width > w-1 {
+		if used+width > w-3 {
 			break
 		}
 		if i > 0 {
@@ -285,7 +359,7 @@ func renderHints(hs []hint, w int) string {
 		b.WriteString(seg)
 		used += width
 	}
-	return " " + b.String()
+	return "  " + b.String()
 }
 
 var helpRows = []hint{
@@ -297,17 +371,18 @@ var helpRows = []hint{
 	{"/", "filter; esc clears"},
 	{"r", "refresh now"},
 	{"q", "close every sidebar"},
+	{"1-9", "jump to card"},
 }
 
 func (m Model) footer() string {
 	switch {
 	case m.filtering:
-		return " " + sKey.Render("/") + sText.Render(m.filter) + sDim.Render("▏")
+		return "  " + sKey.Render("/") + sText.Render(m.filter) + sDim.Render("▏")
 	case m.confirmKill:
 		cur, _ := m.current()
-		return " " + sErr.Render(truncate("kill "+cur.Title+"? y/n", m.width-2))
+		return "  " + sErr.Render(truncate("kill "+cur.Title+"? y/n", m.width-3))
 	case m.msg != "" && m.now.Before(m.msgUntil):
-		return " " + sMsg.Render(truncate(m.msg, m.width-2))
+		return "  " + sMsg.Render(truncate(m.msg, m.width-3))
 	case m.helpOpen:
 		return renderHints([]hint{{"?", "close help"}}, m.width)
 	default:
@@ -317,9 +392,9 @@ func (m Model) footer() string {
 
 func (m Model) helpBlock() []string {
 	var out []string
-	out = append(out, " "+sGroup.Render("keys"))
+	out = append(out, "  "+sGroup.Render("keys"))
 	for _, h := range helpRows {
-		out = append(out, fmt.Sprintf(" %s %s", sKey.Render(fmt.Sprintf("%-5s", h.key)), sKeyLbl.Render(truncate(h.label, m.width-8))))
+		out = append(out, fmt.Sprintf("  %s %s", sKey.Render(fmt.Sprintf("%-5s", h.key)), sKeyLbl.Render(truncate(h.label, m.width-9))))
 	}
 	return out
 }
@@ -339,7 +414,7 @@ func Render(m Model) string {
 		extra = m.helpBlock()
 	}
 	if m.err != nil {
-		extra = append(extra, " "+sErr.Render(truncate(m.err.Error(), m.width-2)))
+		extra = append(extra, "  "+sErr.Render(truncate(m.err.Error(), m.width-3)))
 	}
 	bodyH := m.height - 1 - 1 - len(extra)
 	if bodyH < 1 {

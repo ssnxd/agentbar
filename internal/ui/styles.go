@@ -42,9 +42,11 @@ type statusLook struct {
 var statusLooks = map[string]statusLook{
 	state.StatusNeedsYou: {"●", "needs you", lipgloss.NewStyle().Bold(true).Foreground(cPeach)},
 	state.StatusWorking:  {"◐", "working", lipgloss.NewStyle().Foreground(cBlue)},
-	state.StatusWaiting:  {"○", "waiting", lipgloss.NewStyle().Foreground(cGreen)},
-	state.StatusError:    {"✗", "error", lipgloss.NewStyle().Foreground(cRed)},
-	state.StatusUnknown:  {"◌", "unknown", lipgloss.NewStyle().Foreground(cOverlay1)},
+	// waiting is quiet on purpose: idle sessions must not compete with
+	// the ones that need you.
+	state.StatusWaiting: {"○", "waiting", lipgloss.NewStyle().Foreground(cSubtext0)},
+	state.StatusError:   {"✗", "error", lipgloss.NewStyle().Foreground(cRed)},
+	state.StatusUnknown: {"◌", "unknown", lipgloss.NewStyle().Foreground(cOverlay1)},
 }
 
 // spinnerFrames animate working rows, driven by the poll tick.

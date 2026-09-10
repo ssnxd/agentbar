@@ -40,6 +40,7 @@ type Model struct {
 	sessions []session.Session
 	panes    map[string]tmuxctl.Pane
 	selected string // session id, so the cursor survives reorders
+	moved    bool   // the user has moved the cursor; stop homing it
 	scroll   int
 
 	filter      string
@@ -145,13 +146,24 @@ func (m *Model) ensureSelection() {
 	}
 	// No valid selection: start on the session in this window if there
 	// is one, else the first row.
-	for _, s := range rows {
-		if m.here != "" && s.TmuxPaneID == m.here {
+	if !m.home() {
+		m.selected = rows[0].ID
+	}
+}
+
+// home puts the cursor on the session running in this viewer's window.
+// Reports whether there is one.
+func (m *Model) home() bool {
+	if m.here == "" {
+		return false
+	}
+	for _, s := range m.ordered() {
+		if s.TmuxPaneID == m.here {
 			m.selected = s.ID
-			return
+			return true
 		}
 	}
-	m.selected = rows[0].ID
+	return false
 }
 
 func (m *Model) move(delta int) {
@@ -220,6 +232,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connected = true
 		m.now = time.Now()
 		m.here = m.herePane()
+		// The first snapshot predates this sidebar's own pane, so "here"
+		// is unknown until a later one. Keep homing the cursor until the
+		// user moves it.
+		if !m.moved {
+			m.home()
+		}
 		m.ensureSelection()
 		return m, waitSnapshot(m.snaps)
 	case actionMsg:
@@ -271,14 +289,19 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, m.closeAll()
 	case "j", "down":
+		m.moved = true
 		m.move(1)
 	case "k", "up":
+		m.moved = true
 		m.move(-1)
 	case "g", "home":
+		m.moved = true
 		m.move(-1 << 20)
 	case "G", "end":
+		m.moved = true
 		m.move(1 << 20)
 	case "tab":
+		m.moved = true
 		m.nextHot()
 	case "enter":
 		return m, m.jump()
@@ -298,6 +321,14 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return actionMsg{err: daemon.Nudge()} }
 	case "?":
 		m.helpOpen = !m.helpOpen
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// the card's number, as shown on its first line: select and jump
+		rows := m.ordered()
+		if i := int(k[0] - '1'); i < len(rows) {
+			m.moved = true
+			m.selected = rows[i].ID
+			return m, m.jump()
+		}
 	}
 	return m, nil
 }

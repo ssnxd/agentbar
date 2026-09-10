@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/ssnxd/agentbar/internal/daemon"
 	"github.com/ssnxd/agentbar/internal/session"
 	"github.com/ssnxd/agentbar/internal/state"
 	"github.com/ssnxd/agentbar/internal/tmuxctl"
@@ -14,7 +16,7 @@ import (
 func sample(now time.Time) []session.Session {
 	return []session.Session{
 		{ID: "1", Project: "miivo-api", Title: "Fix auth middleware token refresh for the mobile client", Status: state.StatusNeedsYou, Detail: "Bash touch /tmp/agentbar-e2e", TmuxSession: "work", TmuxTarget: "work:2.2", TmuxPaneID: "%1", InTmux: true, Model: "claude-fable-5-1", Branch: "fix/auth", StartedAt: now.Add(-3*time.Hour - 12*time.Minute), LastActivity: now.Add(-12 * time.Minute)},
-		{ID: "2", Project: "miivo-api", Title: "add rate limiter", Status: state.StatusWorking, TmuxSession: "work", TmuxTarget: "work:1.2", TmuxPaneID: "%2", InTmux: true, Model: "claude-opus-5", Branch: "main", StartedAt: now.Add(-45 * time.Minute), LastActivity: now.Add(-3 * time.Minute)},
+		{ID: "2", Project: "miivo-api", Title: "add rate limiter", Status: state.StatusWorking, Detail: "Bash go test ./...", TmuxSession: "work", TmuxTarget: "work:1.2", TmuxPaneID: "%2", InTmux: true, Model: "claude-opus-5", Branch: "main", StartedAt: now.Add(-45 * time.Minute), LastActivity: now.Add(-3 * time.Minute)},
 		{ID: "3", Project: "dotfiles", Title: "ghostty theme", Status: state.StatusWaiting, Model: "claude-sonnet-5", Branch: "main", StartedAt: now.Add(-26 * time.Hour), LastActivity: now.Add(-40 * time.Minute)},
 	}
 }
@@ -25,17 +27,22 @@ func TestRenderCards(t *testing.T) {
 	out := ansi.Strip(Render(m))
 	for _, want := range []string{
 		"3 · 1 needs you",
-		"miivo-api", "3h 12m", // card 1 line 1
+		"miivo-api · fix/auth", "● needs you 12m", // card 1 line 1: repo · branch, status with idle age
 		"Fix auth middleware token refresh for", // title wrapped, first line
 		"the mobile client",                     // second line
-		"fix/auth", "● needs you",
-		"Bash touch /tmp/agentbar-e2e",
-		"45m", "add rate limiter", "◐ working",
-		"dotfiles", "1d 2h", "ghostty theme", "○ waiting",
+		"Bash touch /tmp/agentbar-e2e",          // the prompt it needs you for
+		"miivo-api · main", "add rate limiter", "◐ working",
+		"Bash go test ./...", // what the working session is doing right now
+		"dotfiles · main", "ghostty theme", "○ waiting 40m",
 		"enter jump", "y accept", "x kill",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"3h 12m", "1d 2h", "◐ working 3m"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("unexpected %q in:\n%s", gone, out)
 		}
 	}
 	lines := strings.Split(out, "\n")
@@ -51,14 +58,74 @@ func TestRenderCards(t *testing.T) {
 	if !(strings.Index(out, "add rate limiter") < strings.Index(out, "Fix auth") && strings.Index(out, "Fix auth") < strings.Index(out, "ghostty")) {
 		t.Errorf("order wrong:\n%s", out)
 	}
-	// right alignment: uptime ends at the right edge
+	// right alignment: status ends at the right margin, on the repo line
 	for _, l := range lines {
-		if strings.Contains(l, "3h 12m") && !strings.HasSuffix(l, "3h 12m") {
-			t.Errorf("uptime not right-aligned: %q", l)
+		l = strings.TrimRight(l, " ")
+		if strings.Contains(l, "● needs you") && !(strings.HasSuffix(l, "● needs you 12m") && strings.Contains(l, "miivo-api")) {
+			t.Errorf("status not right-aligned on the repo line: %q", l)
 		}
-		if strings.Contains(l, "● needs you") && !strings.HasSuffix(l, "● needs you") {
-			t.Errorf("status not right-aligned: %q", l)
+	}
+}
+
+func TestRenderAgents(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	ss[1].Agents = []session.Agent{
+		{ID: "a1", Type: "Explore", Description: "Map hook payloads", Tool: "Grep", Detail: "Grep hooks", StartedAt: now.Add(-2 * time.Minute)},
+		{ID: "a2", Type: "general-purpose", Tool: "Bash", Detail: "Bash go test ./...", StartedAt: now.Add(-time.Minute)},
+	}
+	m := Model{width: 42, height: 30, now: now, sessions: ss, selected: "2"}
+	out := ansi.Strip(Render(m))
+	lines := strings.Split(out, "\n")
+	find := func(sub string) string {
+		for _, l := range lines {
+			if strings.Contains(l, sub) {
+				return strings.TrimRight(l, " ")
+			}
 		}
+		t.Fatalf("missing %q in:\n%s", sub, out)
+		return ""
+	}
+	// description when known, else the agent type; last tool on the right
+	l1 := find("Map hook payloads")
+	if !strings.Contains(l1, "↳") || !strings.HasSuffix(l1, "Grep") {
+		t.Errorf("agent line 1: %q", l1)
+	}
+	l2 := find("general-purpose")
+	if !strings.HasSuffix(l2, "Bash") {
+		t.Errorf("agent line 2: %q", l2)
+	}
+	// agents sit under their own card: after "add rate limiter", before "Fix auth"
+	if !(strings.Index(out, "add rate limiter") < strings.Index(out, "Map hook payloads") && strings.Index(out, "Map hook payloads") < strings.Index(out, "Fix auth")) {
+		t.Errorf("agent lines misplaced:\n%s", out)
+	}
+	for _, l := range lines {
+		if ansi.StringWidth(l) > 42 {
+			t.Errorf("line too wide (%d): %q", ansi.StringWidth(l), l)
+		}
+	}
+	// selection covers the agent lines too
+	body := m.body()
+	for _, b := range body {
+		if strings.Contains(ansi.Strip(b.text), "Map hook payloads") && b.id != "2" {
+			t.Errorf("agent line not attributed to its session: %+v", b)
+		}
+	}
+}
+
+func TestRenderAgentsCapped(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	for i := 0; i < 6; i++ {
+		ss[1].Agents = append(ss[1].Agents, session.Agent{ID: string(rune('a' + i)), Type: "Explore", Description: "task " + string(rune('a'+i)), Tool: "Read"})
+	}
+	m := Model{width: 42, height: 40, now: now, sessions: ss, selected: "2"}
+	out := ansi.Strip(Render(m))
+	if n := strings.Count(out, "↳"); n != maxAgentLines+1 {
+		t.Errorf("want %d agent rows (incl. the +more row), got %d:\n%s", maxAgentLines+1, n, out)
+	}
+	if !strings.Contains(out, "+2 more") {
+		t.Errorf("missing overflow row:\n%s", out)
 	}
 }
 
@@ -89,8 +156,9 @@ func TestHereMarkerAndDefaultSelection(t *testing.T) {
 			}
 		}
 	}
-	if marked != 5 {
-		t.Errorf("expected 5 marked lines for the current card, got %d:\n%s", marked, out)
+	// repo/status, two title lines, the prompt detail
+	if marked != 4 {
+		t.Errorf("expected 4 marked lines for the current card, got %d:\n%s", marked, out)
 	}
 	// a viewer with no session in its window marks nothing
 	m2 := Model{width: 42, height: 24, now: now, sessions: sample(now), ownPane: "%s9"}
@@ -98,6 +166,110 @@ func TestHereMarkerAndDefaultSelection(t *testing.T) {
 	m2.here = m2.herePane()
 	if strings.Contains(ansi.Strip(Render(m2)), hereMark) {
 		t.Error("no session in this window: no marker")
+	}
+}
+
+// The first snapshot a fresh viewer receives was built before its own pane
+// existed, so "here" is unknown and the cursor lands on the first row. Once
+// a snapshot knows the pane, the cursor must move home, unless the user has
+// already moved it.
+func TestCursorHomesOnceOwnPaneIsKnown(t *testing.T) {
+	now := time.Now()
+	m := Model{width: 42, height: 24, now: now, ownPane: "%s1"}
+	early := map[string]tmuxctl.Pane{
+		"%1": {PaneID: "%1", WindowID: "@2", Active: true},
+		"%2": {PaneID: "%2", WindowID: "@1", Active: true},
+	}
+	mm, _ := m.Update(snapshotMsg(daemon.Snapshot{Sessions: sample(now), Panes: early}))
+	m = mm.(Model)
+	if m.selected != "2" {
+		t.Fatalf("own pane unknown: expected first row, got %q", m.selected)
+	}
+	later := map[string]tmuxctl.Pane{
+		"%s1": {PaneID: "%s1", WindowID: "@2", Sidebar: true},
+		"%1":  {PaneID: "%1", WindowID: "@2", Active: true},
+		"%2":  {PaneID: "%2", WindowID: "@1", Active: true},
+	}
+	mm, _ = m.Update(snapshotMsg(daemon.Snapshot{Sessions: sample(now), Panes: later}))
+	m = mm.(Model)
+	if m.selected != "1" {
+		t.Errorf("cursor should move to the session in this window, got %q", m.selected)
+	}
+	// the user moves: later snapshots leave the cursor alone
+	mm, _ = m.key(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = mm.(Model)
+	if m.selected != "3" {
+		t.Fatalf("after j: %q", m.selected)
+	}
+	mm, _ = m.Update(snapshotMsg(daemon.Snapshot{Sessions: sample(now), Panes: later}))
+	m = mm.(Model)
+	if m.selected != "3" {
+		t.Errorf("snapshot must not override a cursor the user moved, got %q", m.selected)
+	}
+}
+
+// Every row keeps a one-cell margin on the right and starts its text in
+// column three: column one is the here-marker gutter, column two is space.
+func TestRenderPadding(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := Model{width: 42, height: 24, now: now, sessions: sample(now), selected: "1", here: "%1"}
+	out := ansi.Strip(Render(m))
+	for _, l := range strings.Split(out, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if ansi.StringWidth(strings.TrimRight(l, " ")) > 41 {
+			t.Errorf("text touches the right edge: %q", l)
+		}
+		r := []rune(l)
+		if len(r) < 3 || (r[0] != ' ' && r[0] != '▌') || r[1] != ' ' || r[2] == ' ' {
+			t.Errorf("text must start in column three after gutter and space: %q", l)
+		}
+	}
+	if !strings.Contains(out, "▌ 2 miivo-api") {
+		t.Errorf("here marker should sit apart from the text:\n%s", out)
+	}
+}
+
+func TestRenderContextOnWorkingCard(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	ss[0].ContextTokens = 900000 // needs-you: not shown
+	ss[1].ContextTokens = 142345 // working: shown
+	m := Model{width: 42, height: 24, now: now, sessions: ss, selected: "2"}
+	out := ansi.Strip(Render(m))
+	if !strings.Contains(out, "◐ working · 142k") {
+		t.Errorf("working card should carry context size:\n%s", out)
+	}
+	if strings.Contains(out, "900k") {
+		t.Errorf("idle cards should not carry context size:\n%s", out)
+	}
+	for in, want := range map[int64]string{0: "", 950: "950", 1500: "2k", 142345: "142k", 1234567: "1.2M"} {
+		if got := fmtTokens(in); got != want {
+			t.Errorf("fmtTokens(%d) = %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestRenderIndexAndDigitJump(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := Model{width: 42, height: 24, now: now, sessions: sample(now), selected: "2"}
+	out := ansi.Strip(Render(m))
+	// cards are numbered in display order: window 1, window 2, then non-tmux
+	for _, want := range []string{"1 miivo-api · main", "2 miivo-api · fix/auth", "3 dotfiles · main"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	mm, cmd := m.key(tea.KeyPressMsg{Code: '2', Text: "2"})
+	m = mm.(Model)
+	if m.selected != "1" || cmd == nil {
+		t.Errorf("digit 2 should select the second card and jump: selected=%q cmd=%v", m.selected, cmd != nil)
+	}
+	mm, cmd = m.key(tea.KeyPressMsg{Code: '9', Text: "9"})
+	m = mm.(Model)
+	if m.selected != "1" || cmd != nil {
+		t.Errorf("digit past the end does nothing: selected=%q cmd=%v", m.selected, cmd != nil)
 	}
 }
 
@@ -126,7 +298,7 @@ func TestRenderNarrow(t *testing.T) {
 
 func TestRenderEmptyAndFilter(t *testing.T) {
 	m := Model{width: 42, height: 10, now: time.Now()}
-	if out := ansi.Strip(Render(m)); !strings.Contains(out, "no claude sessions running") || !strings.Contains(out, "no sessions") {
+	if out := ansi.Strip(Render(m)); !strings.Contains(out, "No sessions yet") || !strings.Contains(out, "Start claude in any pane") || !strings.Contains(out, "no sessions") {
 		t.Errorf("empty:\n%s", out)
 	}
 	m.sessions = sample(time.Now())
@@ -136,7 +308,7 @@ func TestRenderEmptyAndFilter(t *testing.T) {
 		t.Errorf("filter:\n%s", out)
 	}
 	m.filter = "zzz"
-	if out := ansi.Strip(Render(m)); !strings.Contains(out, "nothing matches zzz") {
+	if out := ansi.Strip(Render(m)); !strings.Contains(out, "Nothing matches zzz") {
 		t.Errorf("no match:\n%s", out)
 	}
 }
@@ -209,18 +381,18 @@ func TestClampScroll(t *testing.T) {
 func TestHelpers(t *testing.T) {
 	now := time.Now()
 	cases := map[time.Duration]string{
-		10 * time.Second:              "0m",
+		10 * time.Second:              "",
 		5 * time.Minute:               "5m",
-		3*time.Hour + 7*time.Minute:   "3h 07m",
-		26*time.Hour + 30*time.Minute: "1d 2h",
+		3*time.Hour + 7*time.Minute:   "3h",
+		26*time.Hour + 30*time.Minute: "1d",
 	}
 	for d, want := range cases {
-		if got := uptime(now, now.Add(-d)); got != want {
-			t.Errorf("uptime(%v) = %q want %q", d, got, want)
+		if got := age(now, now.Add(-d)); got != want {
+			t.Errorf("age(%v) = %q want %q", d, got, want)
 		}
 	}
-	if uptime(now, time.Time{}) != "" {
-		t.Error("zero start must be empty")
+	if age(now, time.Time{}) != "" {
+		t.Error("zero time must be empty")
 	}
 	if truncate("hello world", 5) != "hell…" || truncate("hi", 5) != "hi" || truncate("x", 0) != "" {
 		t.Errorf("truncate: %q", truncate("hello world", 5))
