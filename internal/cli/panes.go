@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/ssnxd/agentbar/internal/daemon"
 	"github.com/ssnxd/agentbar/internal/tmuxctl"
+	"github.com/ssnxd/agentbar/internal/ui"
 )
 
 // exePath is the absolute, symlink-resolved path of this binary. Hooks and
@@ -59,7 +63,72 @@ func closeAll(r tmuxctl.Runner) {
 	if _, err := tmuxctl.CloseAll(r); err != nil {
 		fatal(err)
 	}
-	_ = daemon.Stop()
+	// the status line may still show what the daemon publishes
+	if !daemon.StatusReads(r) {
+		_ = daemon.Stop()
+	}
+}
+
+// popupChrome is the rows and columns the popup's border takes.
+const popupChrome = 2
+
+// popupWidth is the width of the list inside the popup: wider than a
+// sidebar, since it takes no room from the panes.
+const popupWidth = 64
+
+// Popup (prefix a, or a click on the indicator) floats the session list
+// in the centre of the client, as a picker sized to its content. args: the client to show
+// it on and the pane the user is in, both expanded by tmux in the binding.
+func Popup(args []string) {
+	requireTmux()
+	r := tmuxctl.Exec{}
+	var client, here string
+	if len(args) > 0 {
+		client = args[0]
+	}
+	if len(args) > 1 {
+		here = args[1]
+	}
+	if client == "" {
+		c, err := r.Run("display-message", "-p", "#{client_name}")
+		if err != nil || c == "" {
+			fatal(fmt.Errorf("popup: no tmux client"))
+		}
+		client = c
+	}
+	if err := daemon.EnsureRunning(exePath()); err != nil {
+		// run-shell would put a failure in the user's pane: say it in
+		// the status line instead
+		_, _ = r.Run("display-message", "-c", client, "agentbar: "+err.Error())
+		return
+	}
+	w := popupWidth
+	cw, ch := 0, 0
+	if v, err := r.Run("display-message", "-p", "-c", client, "#{client_width} #{client_height}"); err == nil {
+		_, _ = fmt.Sscan(v, &cw, &ch)
+	}
+	// keep a margin of the pane in sight on every side
+	if cw > 0 && w > cw-popupChrome-4 {
+		w = cw - popupChrome - 4
+	}
+	h := 12
+	if s, err := daemon.Once(daemon.SocketPath(), time.Second); err == nil {
+		h = ui.PopupHeight(s.Sessions, w)
+	}
+	h += popupChrome
+	if ch > 0 && h > ch-4 {
+		h = ch - 4
+	}
+	cmd := fmt.Sprintf("%s view --popup --client %s --here %s", shellQuote(exePath()), shellQuote(client), shellQuote(here))
+	// display-popup returns when the popup closes; an error here is a
+	// popup that is already open
+	_, _ = r.Run("display-popup", "-E", "-c", client, "-x", "C", "-y", "C",
+		"-w", strconv.Itoa(w+popupChrome), "-h", strconv.Itoa(h),
+		"-b", "rounded", "-S", "fg=#45475a", cmd)
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Toggle (prefix a): sidebars everywhere, or none.
@@ -160,11 +229,30 @@ var tmuxHooks = [][2]string{
 // staleHooks were set by earlier versions (single moving pane).
 var staleHooks = []string{"session-window-changed", "client-session-changed"}
 
+// statusClick is tmux's own binding for a click on the status line.
+const statusClick = "switch-client -t ="
+
+// bindStatusClick makes a click on the indicator open the popup and leaves
+// every other click on the status line as tmux has it. A binding the user
+// wrote themselves is not replaced. Reports whether the click is bound.
+func bindStatusClick(r tmuxctl.Runner, popup string) bool {
+	out, _ := r.Run("list-keys", "-T", "root", "MouseDown1Status")
+	if f := strings.Fields(out); len(f) > 4 {
+		if cur := strings.Join(f[4:], " "); cur != statusClick && !strings.Contains(cur, " popup ") {
+			return false
+		}
+	}
+	_, err := r.Run("bind-key", "-T", "root", "MouseDown1Status", "if-shell", "-F",
+		"#{==:#{mouse_status_range},"+daemon.PillRange+"}", popup, statusClick)
+	return err == nil
+}
+
 // TmuxInit installs key bindings and hooks into the running tmux server.
 // tmux.conf runs it once via `run-shell "<exe> tmux-init"`.
 //
-//	@agentbar-key        toggle key after prefix (default a)
-//	@agentbar-focus-key  focus key after prefix (default A)
+//	@agentbar-key          popup key after prefix (default a)
+//	@agentbar-focus-key    sidebar focus key after prefix (default A)
+//	@agentbar-sidebar-key  sidebar toggle key after prefix (default none)
 func TmuxInit() {
 	r := tmuxctl.Exec{}
 	exe := exePath()
@@ -175,8 +263,23 @@ func TmuxInit() {
 	if v, err := r.Run("show-options", "-gqv", "@agentbar-focus-key"); err == nil && v != "" {
 		focusKey = v
 	}
-	if _, err := r.Run("bind-key", key, "run-shell", exe+" toggle #{pane_id}"); err != nil {
+	popup := "run-shell -b '" + exe + " popup #{client_name} #{pane_id}'"
+	if _, err := r.Run("bind-key", key, "run-shell", "-b", exe+" popup #{client_name} #{pane_id}"); err != nil {
 		fatal(err)
+	}
+	if v, err := r.Run("show-options", "-gqv", "@agentbar-sidebar-key"); err == nil && v != "" {
+		if _, err := r.Run("bind-key", v, "run-shell", exe+" toggle #{pane_id}"); err != nil {
+			fatal(err)
+		}
+	}
+	if !bindStatusClick(r, popup) {
+		logf("tmux-init: MouseDown1Status is bound by you; the indicator is not clickable")
+	}
+	// the status line shows the indicator: it needs the daemon from the start
+	if daemon.StatusReads(r) {
+		if err := daemon.EnsureRunning(exe); err != nil {
+			logf("tmux-init: %v", err)
+		}
 	}
 	if _, err := r.Run("bind-key", focusKey, "run-shell", exe+" focus #{pane_id}"); err != nil {
 		fatal(err)

@@ -12,6 +12,7 @@ import (
 //
 //	@agentbar_hot     number of sessions that need you
 //	@agentbar_status  "5 · 2 need you", "3 sessions", or "" when none
+//	@agentbar_pill    the styled, clickable indicator; see pill.go
 //
 // and one the user sets: @agentbar-bell on rings the bell in a session's
 // pane the moment it needs you, so tmux flags its window.
@@ -26,6 +27,7 @@ const (
 type Publisher struct {
 	lastHot    int
 	lastStatus string
+	lastPill   string
 	started    bool
 	prev       map[string]string // session id → status at the last publish
 }
@@ -61,7 +63,14 @@ func (p *Publisher) Publish(r tmuxctl.Runner, s Snapshot) {
 	if !p.started || text != p.lastStatus {
 		_, _ = r.Run("set-option", "-g", StatusOption, text)
 	}
-	p.lastHot, p.lastStatus = hot, text
+	pill := Pill(s)
+	if !p.started || pill != p.lastPill {
+		_, _ = r.Run("set-option", "-g", PillOption, pill)
+	}
+	if !p.started || hot != p.lastHot || text != p.lastStatus || pill != p.lastPill {
+		refreshStatus(r)
+	}
+	p.lastHot, p.lastStatus, p.lastPill = hot, text, pill
 
 	cur := make(map[string]string, len(s.Sessions))
 	var ring []string
@@ -95,4 +104,14 @@ func bell(r tmuxctl.Runner, pane string) {
 	}
 	defer f.Close()
 	_, _ = f.Write([]byte{'\a'})
+}
+
+// Clear empties the published options, so a status line never shows the
+// last state of a daemon that is gone.
+func (p *Publisher) Clear(r tmuxctl.Runner) {
+	_, _ = r.Run("set-option", "-g", HotOption, "0")
+	_, _ = r.Run("set-option", "-g", StatusOption, "")
+	_, _ = r.Run("set-option", "-g", PillOption, "")
+	refreshStatus(r)
+	*p = Publisher{}
 }

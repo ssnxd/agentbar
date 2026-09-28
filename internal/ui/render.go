@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -98,9 +99,15 @@ func (m Model) visible() []session.Session {
 	return out
 }
 
+// matches reports whether every word of q is somewhere in the session.
 func matches(s session.Session, q string) bool {
 	hay := strings.ToLower(strings.Join([]string{s.Project, s.Title, s.Branch, look(s.Status).label, s.TmuxTarget, s.Name}, " "))
-	return strings.Contains(hay, q)
+	for _, w := range strings.Fields(q) {
+		if !strings.Contains(hay, w) {
+			return false
+		}
+	}
+	return true
 }
 
 // ordered returns the visible rows in the order they are drawn.
@@ -108,33 +115,80 @@ func (m Model) ordered() []session.Session {
 	return Ordered(m.visible())
 }
 
-// age is how long ago t was, coarse: "5m", "3h", "1d"; empty under a
-// minute (it just happened) or for a zero time.
-func age(now, t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	d := now.Sub(t)
-	switch {
-	case d < time.Minute:
-		return ""
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd", int(d.Hours())/24)
-}
+func age(now, t time.Time) string { return session.Age(now, t) }
 
 // repoBranch renders "repo · branch" to fit in maxW cells: the branch gives
 // way first, then the repo.
 func repoBranch(s session.Session, maxW int, selected bool) string {
+	st := sGroup
+	if quiet(s.Status) {
+		st = sQuiet
+	}
 	repo := truncate(s.Project, maxW)
 	rest := maxW - ansi.StringWidth(repo) - 3
 	if s.Branch == "" || rest < 4 {
-		return sel(sGroup, selected).Render(repo)
+		return sel(st, selected).Render(repo)
 	}
-	return sel(sGroup, selected).Render(repo) + sel(sDim, selected).Render(" · "+truncate(s.Branch, rest))
+	return sel(st, selected).Render(repo) + dim(selected).Render(" · "+truncate(s.Branch, rest))
+}
+
+// knownTools are the built-in tool names a detail line can start with.
+var knownTools = map[string]bool{
+	"Agent": true, "Bash": true, "Edit": true, "Glob": true, "Grep": true,
+	"MultiEdit": true, "NotebookEdit": true, "Read": true, "Skill": true,
+	"Task": true, "TodoWrite": true, "WebFetch": true, "WebSearch": true,
+	"Write": true,
+}
+
+// mcpTool splits "mcp__server__tool_name" into "server" and "tool name".
+func mcpTool(t string) (server, tool string, ok bool) {
+	rest, found := strings.CutPrefix(t, "mcp__")
+	if !found {
+		return "", "", false
+	}
+	server, tool, _ = strings.Cut(rest, "__")
+	server = strings.TrimPrefix(server, "plugin_")
+	return server, strings.ReplaceAll(tool, "_", " "), true
+}
+
+// toolName is a tool as shown in a narrow column: MCP tools lose their
+// prefix and server.
+func toolName(t string) string {
+	if _, tool, ok := mcpTool(t); ok && tool != "" {
+		return tool
+	}
+	return t
+}
+
+// splitDetail parts a detail line into the tool that leads it and the rest.
+// A line that does not start with a tool comes back whole, as rest.
+func splitDetail(d string) (head, rest string) {
+	first, after, _ := strings.Cut(d, " ")
+	if server, tool, ok := mcpTool(first); ok {
+		head = server
+		if tool != "" {
+			head += " · " + tool
+		}
+		return head, after
+	}
+	if knownTools[first] {
+		return first, after
+	}
+	return "", d
+}
+
+// detailLine renders a detail in w cells, the tool in hs and the rest in rs.
+func detailLine(d string, w int, hs, rs lipgloss.Style) string {
+	head, rest := splitDetail(d)
+	if head == "" {
+		return rs.Render(truncate(rest, w))
+	}
+	head = truncate(head, w)
+	out := hs.Render(head)
+	if left := w - ansi.StringWidth(head) - 1; rest != "" && left > 1 {
+		out += rs.Render(" " + truncate(rest, left))
+	}
+	return out
 }
 
 func truncate(s string, n int) string {
@@ -209,6 +263,54 @@ type line struct {
 	id   string
 }
 
+const (
+	promptMark  = "❯ "
+	promptCaret = "▏"
+	promptHint  = "search sessions"
+)
+
+// pickerHead is the top of the popup: the search line with the match
+// count on the right, and a rule between it and the list.
+func (m Model) pickerHead() []string {
+	n, hot := len(m.visible()), 0
+	for _, s := range m.visible() {
+		if s.Status == state.StatusNeedsYou {
+			hot++
+		}
+	}
+	var right string
+	switch {
+	case m.filter != "":
+		right = sCount.Render(fmt.Sprintf("%d/%d", n, len(m.sessions)))
+	case hot > 0:
+		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(fmt.Sprintf("%d needs you", hot))
+	case n > 0:
+		right = sCount.Render(fmt.Sprint(n))
+	}
+	cw := m.width - 3
+	room := cw - ansi.StringWidth(promptMark) - ansi.StringWidth(right) - 2
+	left := sTitle.Render(promptMark)
+	if m.filter == "" {
+		left += sDim.Render(promptCaret + truncate(promptHint, room-1))
+	} else {
+		q := m.filter
+		// a search longer than the line shows its end, where you type
+		for ansi.StringWidth(q) > room-1 && q != "" {
+			_, size := utf8.DecodeRuneInString(q)
+			q = q[size:]
+		}
+		left += sText.Render(q) + sDim.Render(promptCaret)
+	}
+	gap := cw - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return []string{
+		"  " + left + strings.Repeat(" ", gap) + right,
+		"  " + sRule.Render(strings.Repeat("─", cw)),
+	}
+}
+
 func (m Model) header() string {
 	n := len(m.visible())
 	hot := 0
@@ -224,6 +326,8 @@ func (m Model) header() string {
 		right = sCount.Render("no sessions ")
 	case hot > 0:
 		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(fmt.Sprintf("%d needs you", hot)) + " "
+	case n == 1:
+		right = sCount.Render("1 session ")
 	default:
 		right = sCount.Render(fmt.Sprintf("%d sessions ", n))
 	}
@@ -231,7 +335,7 @@ func (m Model) header() string {
 	if fill < 0 {
 		return truncate(left+right, m.width-1)
 	}
-	return left + sDim.Render(strings.Repeat("─", fill)) + " " + right
+	return left + sRule.Render(strings.Repeat("─", fill)) + " " + right
 }
 
 // body renders every card into lines, unscrolled.
@@ -273,16 +377,30 @@ func (m Model) body() []line {
 			out = append(out, line{text: pad(gutter+fill.Render(" ")+text, w, fill), id: s.ID})
 		}
 
+		// a quiet card sits back: its title drops to the secondary tone
+		title := sel(sText, selected)
+		if quiet(s.Status) {
+			title = sel(sSub, selected)
+		}
+
 		if narrow {
-			add(sel(lk.style, selected).Render(icon) + fill.Render(" ") + sel(sText, selected).Render(truncate(s.Title, cw-2)))
+			name := s.Title
+			if name == "" {
+				name = s.Project
+			}
+			add(sel(lk.style, selected).Render(icon) + fill.Render(" ") + title.Render(truncate(name, cw-2)))
 			out = append(out, line{text: ""})
 			continue
 		}
 
 		// 1: number, repo · branch (left), status with idle age or context (right)
 		num := fmt.Sprintf("%d ", i+1)
+		if m.popup {
+			// digits type into the search there: no number to press
+			num = ""
+		}
 		sw := ansi.StringWidth(status)
-		left := sel(sDim, selected).Render(num) + repoBranch(s, cw-len(num)-sw-2, selected)
+		left := dim(selected).Render(num) + repoBranch(s, cw-len(num)-sw-2, selected)
 		gap := cw - ansi.StringWidth(left) - sw
 		if gap < 1 {
 			gap = 1
@@ -290,26 +408,26 @@ func (m Model) body() []line {
 		add(left + fill.Render(strings.Repeat(" ", gap)) + sel(lk.style, selected).Render(status))
 		// 2..3: title, wrapped
 		for _, t := range wrapLines(s.Title, cw, maxTitleLines) {
-			add(sel(sText, selected).Render(t))
+			add(title.Render(t))
 		}
 		// live line: what it needs you for, or what it is doing right now
 		switch s.Status {
 		case state.StatusNeedsYou, state.StatusError:
 			if s.Detail != "" {
-				add(sel(sSub, selected).Render(truncate(s.Detail, cw)))
+				add(detailLine(s.Detail, cw, sel(sText, selected), sel(sSub, selected)))
 			}
 		case state.StatusWorking:
 			if s.Detail != "" {
-				add(sel(sDim, selected).Render(truncate(s.Detail, cw)))
+				add(detailLine(s.Detail, cw, sel(sSub, selected), dim(selected)))
 			}
 		}
 		// running subagents: "↳ what it is doing" (left) · last tool (right)
 		for i, a := range s.Agents {
 			if i == maxAgentLines && len(s.Agents) > maxAgentLines {
-				add(sel(sDim, selected).Render(fmt.Sprintf("%s+%d more", agentMark, len(s.Agents)-maxAgentLines)))
+				add(dim(selected).Render(fmt.Sprintf("%s+%d more", agentMark, len(s.Agents)-maxAgentLines)))
 				break
 			}
-			add(twoSided(agentMark+agentLabel(a), a.Tool, sel(sSub, selected), sel(sDim, selected), fill, cw))
+			add(twoSided(agentMark+agentLabel(a), truncate(toolName(a.Tool), cw/3), sel(sSub, selected), dim(selected), fill, cw))
 		}
 		out = append(out, line{text: ""})
 	}
@@ -333,11 +451,20 @@ type hint struct{ key, label string }
 
 func (m Model) hints() []hint {
 	cur, ok := m.current()
+	if m.popup {
+		hs := []hint{{"enter", "jump"}}
+		if ok && cur.Status == state.StatusNeedsYou {
+			hs = append(hs, hint{"^y", "accept"})
+		}
+		return append(hs, hint{"^x", "kill"}, hint{"tab", "next request"}, hint{"esc", "close"})
+	}
 	hs := []hint{{"enter", "jump"}}
 	if ok && cur.Status == state.StatusNeedsYou {
 		hs = append(hs, hint{"y", "accept"})
 	}
-	hs = append(hs, hint{"x", "kill"}, hint{"/", "filter"}, hint{"?", "help"})
+	// help before filter: hints that do not fit drop from the end, and
+	// help is the one that leads to all the others.
+	hs = append(hs, hint{"x", "kill"}, hint{"?", "help"}, hint{"/", "filter"})
 	return hs
 }
 
@@ -360,6 +487,13 @@ func renderHints(hs []hint, w int) string {
 		used += width
 	}
 	return "  " + b.String()
+}
+
+// PopupHeight is how many rows the list needs at width w, so a popup can
+// be sized to its content.
+func PopupHeight(ss []session.Session, w int) int {
+	m := Model{width: w, sessions: ss, popup: true}
+	return len(m.pickerHead()) + len(m.body()) + 1
 }
 
 var helpRows = []hint{
@@ -391,7 +525,8 @@ func (m Model) footer() string {
 }
 
 func (m Model) helpBlock() []string {
-	var out []string
+	// a blank row parts the keys from the list above them
+	out := []string{""}
 	out = append(out, "  "+sGroup.Render("keys"))
 	for _, h := range helpRows {
 		out = append(out, fmt.Sprintf("  %s %s", sKey.Render(fmt.Sprintf("%-5s", h.key)), sKeyLbl.Render(truncate(h.label, m.width-9))))
@@ -407,7 +542,10 @@ func Render(m Model) string {
 	if m.height <= 0 {
 		m.height = 24
 	}
-	head := m.header()
+	head := []string{m.header()}
+	if m.popup {
+		head = m.pickerHead()
+	}
 	foot := m.footer()
 	var extra []string
 	if m.helpOpen {
@@ -416,7 +554,7 @@ func Render(m Model) string {
 	if m.err != nil {
 		extra = append(extra, "  "+sErr.Render(truncate(m.err.Error(), m.width-3)))
 	}
-	bodyH := m.height - 1 - 1 - len(extra)
+	bodyH := m.height - len(head) - 1 - len(extra)
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -427,8 +565,10 @@ func Render(m Model) string {
 		end = len(lines)
 	}
 	var b strings.Builder
-	b.WriteString(head)
-	b.WriteString("\n")
+	for _, h := range head {
+		b.WriteString(h)
+		b.WriteString("\n")
+	}
 	n := 0
 	for _, l := range lines[scroll:end] {
 		b.WriteString(l.text)

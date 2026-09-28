@@ -68,3 +68,31 @@ func TestEventSubagentLifecycle(t *testing.T) {
 		t.Errorf("agents survive SessionEnd: %+v", agents)
 	}
 }
+
+// The request names what is asked; the notification that follows it must
+// not replace that with "Claude needs your permission".
+func TestEventNotificationKeepsTheRequest(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("AGENTBAR_STATE_DIR", data)
+	dir := filepath.Join(data, "state")
+
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"touch /tmp/x"}}`)
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}`, "--status", state.StatusNeedsYou)
+	if r, _ := state.Read(dir, "s1"); r.Status != state.StatusNeedsYou || r.Detail != "Bash touch /tmp/x" || r.Tool != "Bash" {
+		t.Errorf("request lost: %+v", r)
+	}
+
+	// a notification with no request before it still says what it can
+	feed(t, `{"session_id":"s2","cwd":"/p","hook_event_name":"UserPromptSubmit"}`)
+	feed(t, `{"session_id":"s2","cwd":"/p","hook_event_name":"Notification","message":"Claude needs your input"}`, "--status", state.StatusNeedsYou)
+	if r, _ := state.Read(dir, "s2"); r.Detail != "Claude needs your input" {
+		t.Errorf("notification alone: %+v", r)
+	}
+
+	// once the session moves on, an old request does not come back
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"touch /tmp/x"}}`)
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"Notification","message":"Claude needs your input"}`, "--status", state.StatusNeedsYou)
+	if r, _ := state.Read(dir, "s1"); r.Detail != "Claude needs your input" {
+		t.Errorf("stale request shown: %+v", r)
+	}
+}

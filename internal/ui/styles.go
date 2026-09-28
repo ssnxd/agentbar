@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"regexp"
+	"strings"
+
 	"charm.land/lipgloss/v2"
 	"github.com/ssnxd/agentbar/internal/state"
 )
@@ -9,7 +12,9 @@ import (
 // the terminal's real capability, so these degrade without RGB.
 var (
 	cSurface0 = lipgloss.Color("#313244")
+	cSurface1 = lipgloss.Color("#45475a")
 	cOverlay1 = lipgloss.Color("#7f849c")
+	cOverlay2 = lipgloss.Color("#9399b2")
 	cSubtext0 = lipgloss.Color("#a6adc8")
 	cText     = lipgloss.Color("#cdd6f4")
 	cBlue     = lipgloss.Color("#89b4fa")
@@ -22,6 +27,8 @@ var (
 	sText   = lipgloss.NewStyle().Foreground(cText)
 	sDim    = lipgloss.NewStyle().Foreground(cOverlay1)
 	sSub    = lipgloss.NewStyle().Foreground(cSubtext0)
+	sRule   = lipgloss.NewStyle().Foreground(cSurface1)
+	sQuiet  = lipgloss.NewStyle().Bold(true).Foreground(cSubtext0)
 	sTitle  = lipgloss.NewStyle().Bold(true).Foreground(cMauve)
 	sCount  = lipgloss.NewStyle().Foreground(cSubtext0)
 	sHot    = lipgloss.NewStyle().Bold(true).Foreground(cPeach)
@@ -32,6 +39,21 @@ var (
 	sMsg    = lipgloss.NewStyle().Foreground(cPeach)
 	sErr    = lipgloss.NewStyle().Foreground(cRed)
 )
+
+var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// setAccent recolours what carries the accent, the title and the here
+// bar, so the list matches the status line it opens from. Anything but a
+// "#rrggbb" colour is ignored. Reports whether it took the colour.
+func setAccent(c string) bool {
+	c = strings.TrimSpace(c)
+	if !hexColor.MatchString(c) {
+		return false
+	}
+	sTitle = sTitle.Foreground(lipgloss.Color(c))
+	sHere = sHere.Foreground(lipgloss.Color(c))
+	return true
+}
 
 type statusLook struct {
 	icon  string
@@ -81,4 +103,19 @@ func sel(st lipgloss.Style, selected bool) lipgloss.Style {
 		return st.Background(cSurface0)
 	}
 	return st
+}
+
+// dim is sDim, lifted one step on the selection band so it keeps the
+// contrast it has on the plain background.
+func dim(selected bool) lipgloss.Style {
+	if selected {
+		return lipgloss.NewStyle().Foreground(cOverlay2).Background(cSurface0)
+	}
+	return sDim
+}
+
+// quiet reports whether a card sits back: nothing is happening in it and
+// nothing is asked of you.
+func quiet(status string) bool {
+	return status == state.StatusWaiting || status == state.StatusUnknown
 }
