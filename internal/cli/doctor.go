@@ -9,9 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ssnxd/agentbar/internal/daemon"
 	"github.com/ssnxd/agentbar/internal/hooks"
 	"github.com/ssnxd/agentbar/internal/paths"
 	"github.com/ssnxd/agentbar/internal/registry"
+	"github.com/ssnxd/agentbar/internal/tmuxctl"
 )
 
 var tmuxVerRe = regexp.MustCompile(`(\d+)\.(\d+)`)
@@ -78,6 +80,12 @@ func Doctor() {
 
 	if os.Getenv("TMUX") != "" {
 		fmt.Println("ok   inside tmux")
+		r := tmuxctl.Exec{}
+		if daemon.StatusReads(r) {
+			check(daemon.Running(daemon.SocketPath()), "status line reads agentbar; daemon running", "run: agentbar tmux-init")
+		} else {
+			fmt.Println("note status line has no indicator; add #{E:@agentbar_pill} to status-right")
+		}
 	} else {
 		fmt.Println("note not inside tmux (fine for install/doctor)")
 	}

@@ -21,6 +21,8 @@ func main() {
 	}
 	switch cmd {
 	// user-facing
+	case "popup":
+		cli.Popup(args)
 	case "toggle":
 		cli.Toggle(args)
 	case "focus":
@@ -37,7 +39,7 @@ func main() {
 		cli.Jump(args)
 	// plumbing
 	case "view", "ui":
-		ui.Run()
+		ui.Run(viewOptions(args))
 	case "daemon":
 		cli.Daemon()
 	case "event":
@@ -60,10 +62,31 @@ func main() {
 	}
 }
 
-const usage = `agentbar — a tmux sidebar for running Claude Code sessions
+// viewOptions reads the flags `agentbar popup` passes to the viewer.
+func viewOptions(args []string) ui.Options {
+	var o ui.Options
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--popup":
+			o.Popup = true
+		case "--client":
+			if i++; i < len(args) {
+				o.Client = args[i]
+			}
+		case "--here":
+			if i++; i < len(args) {
+				o.Here = args[i]
+			}
+		}
+	}
+	return o
+}
+
+const usage = `agentbar — your running Claude Code sessions, in tmux
 
 usage:
-  agentbar toggle               sidebars in every window, or none (bind to prefix a)
+  agentbar popup                the session list as a search popup (prefix a)
+  agentbar toggle               sidebars in every window, or none
   agentbar focus                into the sidebar / back to your pane (bind to prefix A)
   agentbar close                remove every sidebar
   agentbar install [--uninstall]   add (or remove) agentbar hooks in ~/.claude/settings.json

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,8 +28,19 @@ type (
 	actionMsg   struct {
 		text string
 		err  error
+		quit bool // the action finished what the popup was opened for
 	}
 )
+
+// Options select how the viewer runs. The zero value is a sidebar pane.
+//
+// A popup is a picker: a search line on top, the list below. Every
+// printable key goes to the search, so its actions sit on control keys.
+type Options struct {
+	Popup  bool   // a popup over the client: closes once it has taken you somewhere
+	Client string // popup: the tmux client it floats over
+	Here   string // popup: the pane the user was in when they opened it
+}
 
 // Model is the whole viewer state. Rendering is pure over it.
 type Model struct {
@@ -36,6 +48,9 @@ type Model struct {
 	snaps   <-chan daemon.Snapshot
 	exe     string
 	ownPane string // TMUX_PANE of this viewer
+	popup   bool   // see Options
+	client  string
+	opened  string // popup: Options.Here
 
 	sessions []session.Session
 	panes    map[string]tmuxctl.Pane
@@ -61,6 +76,9 @@ type Model struct {
 // herePane finds the active non-sidebar pane in this viewer's own window:
 // the pane the user is in when they look at this sidebar.
 func (m Model) herePane() string {
+	if m.popup {
+		return m.opened
+	}
 	own, ok := m.panes[m.ownPane]
 	if !ok {
 		return ""
@@ -82,13 +100,25 @@ func (m Model) herePane() string {
 
 // Run launches the viewer (blocking). It connects to the daemon, starting
 // one if none answers.
-func Run() {
+func Run(o Options) {
 	exe, _ := os.Executable()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch := make(chan daemon.Snapshot, 1)
 	go daemon.Connect(ctx, daemon.SocketPath(), ch, func() error { return daemon.StartDetached(exe) })
-	m := Model{runner: tmuxctl.Exec{}, snaps: ch, exe: exe, ownPane: os.Getenv("TMUX_PANE"), now: time.Now()}
+	m := Model{runner: tmuxctl.Exec{}, snaps: ch, exe: exe, ownPane: os.Getenv("TMUX_PANE"), now: time.Now(),
+		popup: o.Popup, client: o.Client, opened: o.Here}
+	// @agentbar-accent is a format, read for the pane this list belongs
+	// to, so an accent that differs per session follows the session
+	pane := m.ownPane
+	if o.Popup {
+		pane = o.Here
+	}
+	if pane != "" {
+		if c, err := m.runner.Run("display-message", "-p", "-t", pane, "#{E:@agentbar-accent}"); err == nil {
+			setAccent(c)
+		}
+	}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "agentbar:", err)
 		os.Exit(1)
@@ -116,7 +146,7 @@ func waitSnapshot(ch <-chan daemon.Snapshot) tea.Cmd {
 // windowActive reports whether this viewer's window is the one on screen.
 // Idle windows skip the spinner tick so they cost nothing.
 func (m Model) windowActive() bool {
-	if m.ownPane == "" {
+	if m.ownPane == "" || m.popup {
 		return true
 	}
 	p, ok := m.panes[m.ownPane]
@@ -144,6 +174,11 @@ func (m *Model) ensureSelection() {
 			return
 		}
 	}
+	// A search that lost the selected row selects its best match.
+	if m.popup && m.filter != "" {
+		m.selected = rows[0].ID
+		return
+	}
 	// No valid selection: start on the session in this window if there
 	// is one, else the first row.
 	if !m.home() {
@@ -151,9 +186,39 @@ func (m *Model) ensureSelection() {
 	}
 }
 
-// home puts the cursor on the session running in this viewer's window.
+// oldestHot puts the cursor on the session that has needed you longest.
 // Reports whether there is one.
+func (m *Model) oldestHot() bool {
+	found := false
+	var oldest time.Time
+	for _, s := range m.ordered() {
+		if s.Status != state.StatusNeedsYou {
+			continue
+		}
+		if !found || s.LastActivity.Before(oldest) {
+			m.selected, oldest, found = s.ID, s.LastActivity, true
+		}
+	}
+	return found
+}
+
+// otherHot reports whether a session besides id needs you.
+func (m Model) otherHot(id string) bool {
+	for _, s := range m.ordered() {
+		if s.ID != id && s.Status == state.StatusNeedsYou {
+			return true
+		}
+	}
+	return false
+}
+
+// home puts the cursor on the session running in this viewer's window; a
+// popup opens on the oldest request instead, when there is one. Reports
+// whether it found a place.
 func (m *Model) home() bool {
+	if m.popup && m.oldestHot() {
+		return true
+	}
 	if m.here == "" {
 		return false
 	}
@@ -243,6 +308,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionMsg:
 		if msg.err != nil {
 			m.flash(msg.err.Error())
+		} else if msg.quit {
+			return m, tea.Quit
 		} else if msg.text != "" {
 			m.flash(msg.text)
 		}
@@ -284,6 +351,9 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.flash("kill cancelled")
 		return m, nil
+	}
+	if m.popup {
+		return m.pickerKey(msg)
 	}
 	switch k {
 	case "q":
@@ -333,6 +403,65 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// pickerKey handles a key in the popup. Letters, digits and punctuation
+// edit the search; the list moves with the arrows or ctrl+n/p/j/k.
+func (m Model) pickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch k := msg.String(); k {
+	case "esc":
+		// first the search, then the popup
+		if m.filter == "" {
+			return m, tea.Quit
+		}
+		m.filter = ""
+	case "down", "ctrl+n", "ctrl+j":
+		m.moved = true
+		m.move(1)
+		return m, nil
+	case "up", "ctrl+p", "ctrl+k":
+		m.moved = true
+		m.move(-1)
+		return m, nil
+	case "tab":
+		m.moved = true
+		m.nextHot()
+		return m, nil
+	case "enter":
+		return m, m.jump()
+	case "ctrl+y":
+		cmd := m.accept()
+		if cur, ok := m.current(); ok && m.otherHot(cur.ID) {
+			m.moved = true
+			m.nextHot()
+		}
+		return m, cmd
+	case "ctrl+x":
+		if _, ok := m.current(); ok {
+			m.confirmKill = true
+		}
+		return m, nil
+	case "ctrl+r":
+		return m, func() tea.Msg { return actionMsg{err: daemon.Nudge()} }
+	case "backspace":
+		if r := []rune(m.filter); len(r) > 0 {
+			m.filter = string(r[:len(r)-1])
+		}
+	case "ctrl+u":
+		m.filter = ""
+	case "ctrl+w":
+		f := strings.TrimRight(m.filter, " ")
+		m.filter = f[:strings.LastIndex(f, " ")+1]
+	default:
+		if msg.Text == "" {
+			return m, nil
+		}
+		m.filter += msg.Text
+	}
+	// the search changed: the cursor follows the matches, not the homing
+	m.moved = true
+	m.ensureSelection()
+	return m, nil
+}
+
 // closeAll removes every sidebar, this one included, and lets the daemon
 // idle out.
 func (m Model) closeAll() tea.Cmd {
@@ -353,6 +482,12 @@ func (m Model) jump() tea.Cmd {
 		return func() tea.Msg { return actionMsg{text: "not in tmux: cannot jump"} }
 	}
 	r, pane := m.runner, cur.TmuxPaneID
+	if m.popup {
+		client := m.client
+		return func() tea.Msg {
+			return actionMsg{err: tmuxctl.JumpClient(r, client, pane), quit: true}
+		}
+	}
 	return func() tea.Msg {
 		return actionMsg{err: tmuxctl.Jump(r, pane)}
 	}
@@ -374,12 +509,14 @@ func (m Model) accept() tea.Cmd {
 		return func() tea.Msg { return actionMsg{text: "pane is running " + p.Command + ", not claude"} }
 	}
 	r, pane, title := m.runner, cur.TmuxPaneID, cur.Title
+	// a popup that answered the last request has done its job
+	done := m.popup && !m.otherHot(cur.ID)
 	return func() tea.Msg {
 		if err := tmuxctl.SendEnter(r, pane); err != nil {
 			return actionMsg{err: err}
 		}
 		_ = daemon.Nudge()
-		return actionMsg{text: "accepted: " + title}
+		return actionMsg{text: "accepted: " + title, quit: done}
 	}
 }
 

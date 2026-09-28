@@ -230,6 +230,21 @@ func Focus(r Runner, curHint string) (FocusAction, error) {
 	return FocusSidebar, SelectPane(r, sb.PaneID)
 }
 
+// JumpClient takes client to the target pane, switching session and window
+// as needed. It names the client, so it works from a popup, which has no
+// pane of its own.
+func JumpClient(r Runner, client, target string) error {
+	ps, err := ListPanes(r)
+	if err != nil {
+		return err
+	}
+	if FindPane(ps, target) == nil {
+		return fmt.Errorf("pane %s no longer exists", target)
+	}
+	_, err = r.Run("switch-client", "-c", client, "-t", target)
+	return err
+}
+
 // Jump focuses target, switching session and window as needed. Sidebars
 // stay where they are; the target window has its own.
 func Jump(r Runner, target string) error {

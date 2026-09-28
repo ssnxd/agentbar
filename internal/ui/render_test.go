@@ -408,3 +408,275 @@ func TestHelpers(t *testing.T) {
 		t.Errorf("wrapLines long word: %q", got)
 	}
 }
+
+func TestDetailNamesTheTool(t *testing.T) {
+	for _, c := range []struct{ in, head, rest string }{
+		{"Bash go test ./...", "Bash", "go test ./..."},
+		{"Read", "Read", ""},
+		{"mcp__claude-in-chrome__tabs_close_mcp", "claude-in-chrome · tabs close mcp", ""},
+		{"mcp__plugin_context7_context7__query-docs lipgloss", "context7_context7 · query-docs", "lipgloss"},
+		{"Claude needs your permission", "", "Claude needs your permission"},
+		{"Explore · Bash ls", "", "Explore · Bash ls"},
+	} {
+		if head, rest := splitDetail(c.in); head != c.head || rest != c.rest {
+			t.Errorf("splitDetail(%q) = %q, %q; want %q, %q", c.in, head, rest, c.head, c.rest)
+		}
+	}
+	if got := toolName("mcp__claude-in-chrome__navigate"); got != "navigate" {
+		t.Errorf("toolName = %q", got)
+	}
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	ss[1].Detail = "mcp__claude-in-chrome__tabs_close_mcp"
+	out := ansi.Strip(Render(Model{width: 42, height: 24, now: now, sessions: ss, selected: "1"}))
+	if strings.Contains(out, "mcp__") || !strings.Contains(out, "claude-in-chrome · tabs close mcp") {
+		t.Errorf("raw MCP name in:\n%s", out)
+	}
+}
+
+func TestHeaderCountAndHelpHint(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	one := ansi.Strip(Render(Model{width: 42, height: 24, now: now, sessions: sample(now)[2:], selected: "3"}))
+	if !strings.Contains(one, "1 session ") || strings.Contains(one, "1 sessions") {
+		t.Errorf("want singular count in:\n%s", one)
+	}
+	// on a needs-you card the accept hint joins; help must still fit
+	hot := ansi.Strip(Render(Model{width: 42, height: 24, now: now, sessions: sample(now), selected: "1"}))
+	if !strings.Contains(hot, "y accept") || !strings.Contains(hot, "? help") {
+		t.Errorf("want accept and help hints in:\n%s", hot)
+	}
+}
+
+func TestNarrowFallsBackToProject(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := []session.Session{{ID: "1", Project: "scratch", Status: state.StatusWaiting}}
+	out := ansi.Strip(Render(Model{width: 28, height: 10, now: now, sessions: ss, selected: "1"}))
+	if !strings.Contains(out, "○ scratch") {
+		t.Errorf("want project as the name in:\n%s", out)
+	}
+}
+
+func popupModel(now time.Time) Model {
+	m := Model{width: 42, height: 24, now: now, popup: true, client: "/dev/ttys001", opened: "%2", runner: &fakeRunner{}}
+	mm, _ := m.Update(snapshotMsg(daemon.Snapshot{Sessions: sample(now), Panes: map[string]tmuxctl.Pane{
+		"%1": {PaneID: "%1", WindowID: "@2"}, "%2": {PaneID: "%2", WindowID: "@1", Command: "claude"},
+	}}))
+	return mm.(Model)
+}
+
+type fakeRunner struct{ calls []string }
+
+func (f *fakeRunner) Run(args ...string) (string, error) {
+	f.calls = append(f.calls, strings.Join(args, " "))
+	if args[0] == "list-panes" {
+		return "work|@2|2|%1|2|claude|1|1||177\nwork|@1|1|%2|2|claude|1|0||177\n", nil
+	}
+	return "", nil
+}
+
+func isQuit(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
+// A popup opens on the oldest request, not on the session you are in: you
+// opened it to answer something.
+func TestPopupOpensOnOldestRequest(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := popupModel(now)
+	if m.selected != "1" {
+		t.Errorf("cursor should be on the needs-you session, got %q", m.selected)
+	}
+	if m.here != "%2" {
+		t.Errorf("here is the pane the popup was opened from, got %q", m.here)
+	}
+	// nothing asked: it opens on the session you are in
+	ss := sample(now)
+	ss[0].Status = state.StatusWaiting
+	q := Model{width: 42, height: 24, now: now, popup: true, opened: "%2"}
+	mm, _ := q.Update(snapshotMsg(daemon.Snapshot{Sessions: ss}))
+	if got := mm.(Model).selected; got != "2" {
+		t.Errorf("no request: cursor on the session here, got %q", got)
+	}
+}
+
+func TestPopupClosesAndJumps(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := popupModel(now)
+	if _, cmd := m.key(tea.KeyPressMsg{Code: tea.KeyEscape}); !isQuit(cmd) {
+		t.Error("esc closes the popup")
+	}
+	// esc with a search clears the search first
+	m.filter = "auth"
+	mm, cmd := m.key(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if isQuit(cmd) || mm.(Model).filter != "" {
+		t.Error("esc clears the search before it closes")
+	}
+
+	// enter: the client goes to the pane, then the popup closes
+	m = popupModel(now)
+	_, cmd = m.key(tea.KeyPressMsg{Code: tea.KeyEnter})
+	msg := cmd().(actionMsg)
+	if !msg.quit || msg.err != nil {
+		t.Fatalf("jump should finish the popup: %+v", msg)
+	}
+	calls := strings.Join(m.runner.(*fakeRunner).calls, "\n")
+	if !strings.Contains(calls, "switch-client -c /dev/ttys001 -t %1") {
+		t.Errorf("jump must name the client:\n%s", calls)
+	}
+	if _, cmd := m.Update(msg); !isQuit(cmd) {
+		t.Error("the popup closes after the jump")
+	}
+	// a sidebar never quits on jump
+	s := Model{width: 42, height: 24, now: now, sessions: sample(now), selected: "1", runner: &fakeRunner{}}
+	_, cmd = s.key(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd().(actionMsg).quit {
+		t.Error("sidebar stays open")
+	}
+}
+
+func typed(m Model, text string) Model {
+	for _, r := range text {
+		mm, _ := m.key(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = mm.(Model)
+	}
+	return m
+}
+
+// In the popup every printable key is search: the letters that are
+// actions in a sidebar must only type.
+func TestPickerTypingFilters(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := popupModel(now)
+	m = typed(m, "qyx1")
+	if m.filter != "qyx1" || m.confirmKill {
+		t.Fatalf("q, y, x and digits type: filter %q kill %v", m.filter, m.confirmKill)
+	}
+	mm, _ := m.key(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if m.filter != "" {
+		t.Fatalf("ctrl+u clears: %q", m.filter)
+	}
+
+	// the cursor follows the best match and survives later snapshots
+	m = typed(m, "ghostty")
+	if m.selected != "3" {
+		t.Errorf("cursor on the only match, got %q", m.selected)
+	}
+	mm, _ = m.Update(snapshotMsg(daemon.Snapshot{Sessions: sample(now)}))
+	if got := mm.(Model).selected; got != "3" {
+		t.Errorf("a snapshot must not pull the cursor back to the request, got %q", got)
+	}
+	out := ansi.Strip(Render(m))
+	if !strings.Contains(out, "❯ ghostty▏") || !strings.Contains(out, "1/3") || strings.Contains(out, "add rate limiter") {
+		t.Errorf("search line and filtered list:\n%s", out)
+	}
+
+	// words match in any order, across fields
+	m = typed(popupModel(now), "limiter miivo")
+	if rows := m.ordered(); len(rows) != 1 || rows[0].ID != "2" {
+		t.Errorf("two words, both must match: %+v", rows)
+	}
+	mm, _ = m.key(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+	if got := mm.(Model).filter; got != "limiter " {
+		t.Errorf("ctrl+w deletes a word: %q", got)
+	}
+	m = typed(popupModel(now), "zzz")
+	if out := ansi.Strip(Render(m)); !strings.Contains(out, "Nothing matches zzz") || !strings.Contains(out, "0/3") {
+		t.Errorf("no match:\n%s", out)
+	}
+}
+
+func TestPickerMovesAndActs(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := popupModel(now) // order: 2, 1 (needs you, selected), 3
+	for _, k := range []tea.KeyPressMsg{{Code: tea.KeyDown}, {Code: 'n', Mod: tea.ModCtrl}} {
+		mm, _ := popupModel(now).key(k)
+		if got := mm.(Model).selected; got != "3" {
+			t.Errorf("%s moves down, got %q", k.String(), got)
+		}
+	}
+	for _, k := range []tea.KeyPressMsg{{Code: tea.KeyUp}, {Code: 'p', Mod: tea.ModCtrl}} {
+		mm, _ := popupModel(now).key(k)
+		if got := mm.(Model).selected; got != "2" {
+			t.Errorf("%s moves up, got %q", k.String(), got)
+		}
+	}
+	// ctrl+y accepts; it was the only request, so the popup is done
+	m.panes = map[string]tmuxctl.Pane{"%1": {PaneID: "%1", Command: "claude"}}
+	_, cmd := m.key(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	msg := cmd().(actionMsg)
+	if msg.err != nil || !msg.quit {
+		t.Errorf("accept: %+v", msg)
+	}
+	if calls := strings.Join(m.runner.(*fakeRunner).calls, "\n"); !strings.Contains(calls, "send-keys -t %1 Enter") {
+		t.Errorf("accept presses enter in the pane:\n%s", calls)
+	}
+	// ctrl+x asks first
+	mm, _ := popupModel(now).key(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	if !mm.(Model).confirmKill {
+		t.Error("ctrl+x asks before it kills")
+	}
+}
+
+func TestPopupRender(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	m := popupModel(now)
+	m.width = 64
+	out := ansi.Strip(Render(m))
+	lines := strings.Split(out, "\n")
+	if !strings.HasPrefix(lines[0], "  ❯ ▏search sessions") || !strings.HasSuffix(lines[0], "3 · 1 needs you") {
+		t.Errorf("search line: %q", lines[0])
+	}
+	if strings.Trim(lines[1], " ") != strings.Repeat("─", 61) {
+		t.Errorf("rule under the search: %q", lines[1])
+	}
+	for _, l := range lines {
+		if l = strings.TrimRight(l, " "); ansi.StringWidth(l) > 63 {
+			t.Errorf("text in the right margin (%d): %q", ansi.StringWidth(l), l)
+		}
+	}
+	// no card numbers: digits are search here
+	if strings.Contains(out, "1 miivo-api") || !strings.Contains(out, "  miivo-api · fix/auth") {
+		t.Errorf("cards carry no number in the popup:\n%s", out)
+	}
+	for _, want := range []string{"enter jump", "^y accept", "^x kill", "esc close"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing hint %q in:\n%s", want, out)
+		}
+	}
+	// sized to content: every row of the body is a row of the popup
+	h := PopupHeight(sample(now), 64)
+	m.height = h
+	if got := strings.Count(Render(m), "\n") + 1; got != h {
+		t.Errorf("PopupHeight %d but the render has %d rows", h, got)
+	}
+	if !strings.Contains(ansi.Strip(Render(m)), "ghostty theme") {
+		t.Errorf("last card must fit:\n%s", ansi.Strip(Render(m)))
+	}
+}
+
+func TestSetAccent(t *testing.T) {
+	title, here := sTitle, sHere
+	defer func() { sTitle, sHere = title, here }()
+	for _, bad := range []string{"", "green", "#fff", "#{@accent}", "#a6e3a1; rm"} {
+		if setAccent(bad) {
+			t.Errorf("%q is not a colour", bad)
+		}
+	}
+	if !setAccent(" #a6e3a1\n") {
+		t.Fatal("a hex colour sets the accent")
+	}
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	out := Render(Model{width: 42, height: 24, now: now, sessions: sample(now), selected: "1", here: "%1"})
+	// 166;227;161 is #a6e3a1: on the title and on the here bar
+	if n := strings.Count(out, "38;2;166;227;161"); n < 2 {
+		t.Errorf("accent used %d times:\n%q", n, strings.Split(out, "\n")[0])
+	}
+	if strings.Contains(out, "38;2;203;166;247") {
+		t.Error("the default accent must be gone")
+	}
+}
