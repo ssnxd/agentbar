@@ -11,9 +11,10 @@ import (
 )
 
 type fakeTmux struct {
-	calls []string
-	opts  map[string]string
-	tty   string
+	calls   []string
+	opts    map[string]string
+	tty     string
+	clients string
 }
 
 func (f *fakeTmux) Run(args ...string) (string, error) {
@@ -23,6 +24,8 @@ func (f *fakeTmux) Run(args ...string) (string, error) {
 		return f.opts[args[len(args)-1]], nil
 	case "display-message":
 		return f.tty, nil
+	case "list-clients":
+		return f.clients, nil
 	}
 	return "", nil
 }
@@ -63,7 +66,7 @@ func TestPublishSetsStatusOptionsOnlyWhenChanged(t *testing.T) {
 		t.Errorf("after change:\n%s", f.joined())
 	}
 	p.Publish(f, snapOf())
-	if !strings.HasSuffix(f.joined(), "set-option -g @agentbar_status ") {
+	if !strings.Contains(f.joined(), "set-option -g @agentbar_status \nset-option -g @agentbar_pill \n") {
 		t.Errorf("no sessions clears the status text:\n%s", f.joined())
 	}
 }

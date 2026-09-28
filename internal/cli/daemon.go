@@ -19,7 +19,10 @@ func Daemon() {
 			s := daemon.Build(r)
 			pub.Publish(r, s)
 			return s
-		}, daemon.Interval, daemon.IdleExit)
+		}, daemon.Interval, daemon.IdleExit,
+		// the status line shows what the daemon publishes: stay while it does
+		func() bool { return daemon.StatusReads(r) })
+	pub.Clear(r)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agentbar daemon:", err)
 		os.Exit(1)

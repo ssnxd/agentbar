@@ -22,7 +22,7 @@ func TestServeConnectRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, sock, build, 50*time.Millisecond, 0) }()
+	go func() { done <- Serve(ctx, sock, build, 50*time.Millisecond, 0, nil) }()
 
 	for i := 0; i < 40 && !Running(sock); i++ {
 		time.Sleep(25 * time.Millisecond)
@@ -54,7 +54,7 @@ func TestServeConnectRoundTrip(t *testing.T) {
 	if err := Nudge(); err != nil {
 		t.Errorf("nudge: %v", err)
 	}
-	if Serve(ctx, sock, build, time.Second, 0) == nil {
+	if Serve(ctx, sock, build, time.Second, 0, nil) == nil {
 		t.Error("second Serve on a live socket must fail")
 	}
 	cancel()
@@ -77,7 +77,7 @@ func TestServeIdleExit(t *testing.T) {
 	sock := filepath.Join(dir, "d.sock")
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(context.Background(), sock, func() Snapshot { return Snapshot{} }, 30*time.Millisecond, 150*time.Millisecond)
+		done <- Serve(context.Background(), sock, func() Snapshot { return Snapshot{} }, 30*time.Millisecond, 150*time.Millisecond, nil)
 	}()
 	select {
 	case err := <-done:

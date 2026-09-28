@@ -166,9 +166,26 @@ func Stop() error {
 	return syscall.Kill(pid, syscall.SIGTERM)
 }
 
+func dial(sock string, wait time.Duration) (net.Conn, error) {
+	return net.DialTimeout("unix", sock, wait)
+}
+
+func decodeLine(c net.Conn, s *Snapshot) error {
+	sc := bufio.NewScanner(c)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return err
+		}
+		return errors.New("daemon closed the connection")
+	}
+	return json.Unmarshal(sc.Bytes(), s)
+}
+
 // Serve runs the daemon loop until ctx ends or it has had no viewers for
-// idle. build is called every interval and on SIGUSR1.
-func Serve(ctx context.Context, sock string, build func() Snapshot, interval, idle time.Duration) error {
+// idle. build is called every interval and on SIGUSR1. keep, when set, is
+// asked before an idle exit; true keeps the daemon for another idle period.
+func Serve(ctx context.Context, sock string, build func() Snapshot, interval, idle time.Duration, keep func() bool) error {
 	if Running(sock) {
 		return errors.New("daemon already running")
 	}
@@ -236,7 +253,11 @@ func Serve(ctx context.Context, sock string, build func() Snapshot, interval, id
 		if n > 0 {
 			idleSince = time.Now()
 		} else if idle > 0 && time.Since(idleSince) > idle {
-			cancel()
+			if keep != nil && keep() {
+				idleSince = time.Now()
+			} else {
+				cancel()
+			}
 		}
 	}
 

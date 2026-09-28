@@ -4,6 +4,7 @@
 package session
 
 import (
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -181,4 +182,22 @@ func latest(ts ...time.Time) time.Time {
 		}
 	}
 	return m
+}
+
+// Age is how long ago t was, coarse: "5m", "3h", "1d"; empty under a
+// minute (it just happened) or for a zero time.
+func Age(now, t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return ""
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours())/24)
 }
