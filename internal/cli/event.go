@@ -55,6 +55,15 @@ func Event(args []string) {
 	if o.Status == "" {
 		return
 	}
+	// A permission prompt fires two hooks: PermissionRequest, which names
+	// the tool and its input, and a Notification, which only says that
+	// Claude needs you. Whichever lands last, keep the one that says what
+	// is asked.
+	if o.Status == state.StatusNeedsYou && o.Tool == "" {
+		if old, ok := state.Read(dir, p.SessionID); ok && old.Status == state.StatusNeedsYou && old.Tool != "" {
+			o.Detail, o.Tool = old.Detail, old.Tool
+		}
+	}
 	err = state.Write(dir, state.Record{
 		SessionID: p.SessionID,
 		CWD:       p.CWD,
