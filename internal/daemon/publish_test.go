@@ -108,3 +108,14 @@ func TestPublishNoBellByDefault(t *testing.T) {
 		t.Errorf("no tty lookup when the bell is off:\n%s", f.joined())
 	}
 }
+
+func TestPublishStatusOneRequest(t *testing.T) {
+	f := &fakeTmux{}
+	(&Publisher{}).Publish(f, snapOf(
+		session.Session{ID: "a", Status: state.StatusNeedsYou},
+		session.Session{ID: "b", Status: state.StatusWorking},
+	))
+	if want := "set-option -g @agentbar_status 2 · 1 needs you"; !strings.Contains(f.joined(), want) {
+		t.Errorf("missing %q in\n%s", want, f.joined())
+	}
+}

@@ -283,7 +283,7 @@ func (m Model) pickerHead() []string {
 	case m.filter != "":
 		right = sCount.Render(fmt.Sprintf("%d/%d", n, len(m.sessions)))
 	case hot > 0:
-		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(fmt.Sprintf("%d needs you", hot))
+		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(session.NeedYou(hot))
 	case n > 0:
 		right = sCount.Render(fmt.Sprint(n))
 	}
@@ -325,7 +325,7 @@ func (m Model) header() string {
 	case n == 0:
 		right = sCount.Render("no sessions ")
 	case hot > 0:
-		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(fmt.Sprintf("%d needs you", hot)) + " "
+		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(session.NeedYou(hot)) + " "
 	case n == 1:
 		right = sCount.Render("1 session ")
 	default:

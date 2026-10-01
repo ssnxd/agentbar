@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ssnxd/agentbar/internal/session"
 	"github.com/ssnxd/agentbar/internal/state"
 	"github.com/ssnxd/agentbar/internal/tmuxctl"
 )
@@ -44,7 +45,7 @@ func Summary(s Snapshot) (hot int, text string) {
 	case n == 0:
 		text = ""
 	case hot > 0:
-		text = fmt.Sprintf("%d · %d need you", n, hot)
+		text = fmt.Sprintf("%d · %s", n, session.NeedYou(hot))
 	case n == 1:
 		text = "1 session"
 	default:
