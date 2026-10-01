@@ -39,4 +39,4 @@ release:
     name: agentbar
   footer: |
     ---
-    A tmux sidebar for running Claude Code sessions. Requires tmux >= 3.2. Run `agentbar install` then `agentbar doctor`.
+    Plugs Claude into tmux so you know when you're needed, without getting in your way. Requires tmux >= 3.2. Run `agentbar install` then `agentbar doctor`.
