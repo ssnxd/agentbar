@@ -201,3 +201,11 @@ func Age(now, t time.Time) string {
 	}
 	return fmt.Sprintf("%dd", int(d.Hours())/24)
 }
+
+// NeedYou counts sessions waiting on the user: "1 needs you", "2 need you".
+func NeedYou(n int) string {
+	if n == 1 {
+		return "1 needs you"
+	}
+	return fmt.Sprintf("%d need you", n)
+}

@@ -148,3 +148,11 @@ func TestBuildEmpty(t *testing.T) {
 		t.Errorf("got %+v", ss)
 	}
 }
+
+func TestNeedYou(t *testing.T) {
+	for n, want := range map[int]string{1: "1 needs you", 2: "2 need you", 7: "7 need you"} {
+		if got := NeedYou(n); got != want {
+			t.Errorf("NeedYou(%d) = %q, want %q", n, got, want)
+		}
+	}
+}

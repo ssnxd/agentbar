@@ -63,10 +63,7 @@ func Pill(s Snapshot) string {
 	switch {
 	case hot > 0:
 		short := fmt.Sprintf("● %d", hot)
-		long := short + " needs you"
-		if hot > 1 {
-			long = short + " need you"
-		}
+		long := "● " + session.NeedYou(hot)
 		if a := session.Age(s.At, oldest); a != "" {
 			long += " " + a
 		}

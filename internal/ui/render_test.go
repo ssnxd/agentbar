@@ -680,3 +680,17 @@ func TestSetAccent(t *testing.T) {
 		t.Error("the default accent must be gone")
 	}
 }
+
+func TestHeaderCountAgreesWithItsNumber(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	ss[2].Status = state.StatusNeedsYou
+	sidebar := Model{width: 42, height: 24, now: now, sessions: ss, selected: "1"}
+	popup := popupModel(now)
+	popup.sessions, popup.width = ss, 64
+	for name, m := range map[string]Model{"sidebar": sidebar, "popup": popup} {
+		if out := ansi.Strip(Render(m)); !strings.Contains(out, "3 · 2 need you") || strings.Contains(out, "2 needs you") {
+			t.Errorf("%s header with two requests:\n%s", name, out)
+		}
+	}
+}
