@@ -1,10 +1,18 @@
 # agentbar
 
-Your running Claude Code sessions in tmux: an indicator in the status
-line, and a popup that shows what each session is doing and takes you
-there.
+Plugs Claude into tmux so you know when you're needed, without getting in
+your way.
 
-![agentbar](docs/screenshot.png)
+agentbar watches every Claude Code session you run in tmux. One indicator
+in your status line tells you when a session needs you. One key opens a
+picker in the middle of the screen with every session, what it is doing,
+and its subagents. Enter takes you there.
+
+![The picker: every session with its status, request, and subagents](docs/picker.png)
+
+The indicator has three states:
+
+![Indicator states: needs you, working or waiting, gone](docs/indicator.png)
 
 ## Install
 
@@ -29,25 +37,13 @@ Put the indicator in your status line:
 set -g status-right '#{E:@agentbar_pill}#{session_name} '
 ```
 
-- The indicator is filled when a session needs you, with the age of the
-  oldest request: `● 1 needs you 12m`. It is soft while sessions work or
-  wait: `◐ 2 ○ 1`. With no sessions it is gone.
-- `prefix a`, or a click on the indicator, opens the session list as a
-  popup in the centre: a search line, the list below it. It opens on the
-  oldest request.
-- In the popup, type to search; words match in any order. Arrows or
-  `ctrl-n`/`ctrl-p` move, `enter` jumps, `tab` goes to the next session
-  that needs you, `ctrl-y` accepts a permission prompt, `ctrl-x` kills,
-  `esc` clears the search, then closes. A jump closes the popup. So does
-  `ctrl-y`, once nothing else needs you.
-- `prefix A` opens the same list as a sidebar in every window and
-  focuses it, or takes you back. In the sidebar: `j`/`k` move, `1`-`9`
-  jump to that card, `y` accept, `x` kill, `/` filter, `q` close them
-  all.
-- Each card: its number, repo and branch, the status with how long it has
-  sat there (or the context size while working), the title, then what it
-  needs you for or what it is doing right now.
-- Running subagents show under their session: the task and the last tool.
+- `prefix a`, or a click on the indicator, opens the picker on the
+  oldest request. Type to search; words match in any order.
+- In the picker: arrows or `ctrl-n`/`ctrl-p` move, `enter` jumps, `tab`
+  goes to the next session that needs you, `ctrl-y` accepts a permission
+  prompt, `ctrl-x` kills, `esc` clears the search, then closes.
+- `prefix A` opens the same list as a sidebar instead. There: `j`/`k`
+  move, `1`-`9` jump, `y` accept, `x` kill, `/` filter, `q` close.
 
 After upgrading, run `agentbar install` again to add any new hooks.
 
