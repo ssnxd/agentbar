@@ -10,9 +10,9 @@ and its subagents. Enter takes you there.
 
 ![The picker: every session with its status, request, and subagents](docs/picker.png)
 
-The indicator has three states:
+The indicator has four states:
 
-![Indicator states: needs you, working or waiting, gone](docs/indicator.png)
+![Indicator states: needs you, done, working or waiting, gone](docs/indicator.png)
 
 A session that finishes while you are not looking is `✓ done`, in green,
 until you look at its pane. It then drops to `○ waiting`. One that
