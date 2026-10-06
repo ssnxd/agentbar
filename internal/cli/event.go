@@ -64,6 +64,13 @@ func Event(args []string) {
 			o.Detail, o.Tool = old.Detail, old.Tool
 		}
 	}
+	// The idle notification says a session sits at its prompt. One that
+	// finished unseen sits there too: it stays done, with the time it ended.
+	if o.Status == state.StatusWaiting && p.HookEventName == "Notification" {
+		if old, ok := state.Read(dir, p.SessionID); ok && old.Status == state.StatusDone {
+			return
+		}
+	}
 	err = state.Write(dir, state.Record{
 		SessionID: p.SessionID,
 		CWD:       p.CWD,

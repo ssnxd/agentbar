@@ -143,6 +143,31 @@ func TestProjectBase(t *testing.T) {
 	}
 }
 
+func TestBuildStatusSince(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	stop := now.Add(-5 * time.Minute)
+	reg := []registry.Entry{
+		{PID: 1, SessionID: "hooked", CWD: "/p/a", StartedAt: now.Add(-time.Hour)},
+		{PID: 2, SessionID: "bare", CWD: "/p/b", StartedAt: now.Add(-time.Hour)},
+	}
+	ss := Build(Deps{
+		Registry: reg,
+		States:   map[string]state.Record{"hooked": {SessionID: "hooked", Status: state.StatusDone, UpdatedAt: stop}},
+		// the transcript was written after the turn ended: that is activity,
+		// not a change of status
+		Transcript: func(cwd, id string) transcript.Info {
+			return transcript.Info{Known: true, LastActivity: stop.Add(time.Minute)}
+		},
+		Now: now,
+	})
+	if ss[0].Status != state.StatusDone || !ss[0].StatusSince.Equal(stop) {
+		t.Errorf("a hook status carries the time the hook set it: %+v", ss[0])
+	}
+	if !ss[1].StatusSince.IsZero() {
+		t.Errorf("no hook, no status time: %+v", ss[1])
+	}
+}
+
 func TestBuildEmpty(t *testing.T) {
 	if ss := Build(Deps{Transcript: func(string, string) transcript.Info { return transcript.Info{} }}); len(ss) != 0 {
 		t.Errorf("got %+v", ss)

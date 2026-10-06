@@ -74,7 +74,9 @@ func Map(p Payload, statusOverride string) Outcome {
 			o.Agent.Done = true
 		}
 	case "Stop":
-		o.Status = state.StatusWaiting
+		// The turn ended. Whether you saw it end is the daemon's call: it
+		// knows what is on your screen.
+		o.Status = state.StatusDone
 	case "StopFailure":
 		o.Status = state.StatusError
 		o.Detail = p.Message

@@ -96,3 +96,32 @@ func TestEventNotificationKeepsTheRequest(t *testing.T) {
 		t.Errorf("stale request shown: %+v", r)
 	}
 }
+
+func TestEventStopIsDoneUntilSeen(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("AGENTBAR_STATE_DIR", data)
+	dir := filepath.Join(data, "state")
+
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"UserPromptSubmit"}`)
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"Stop"}`)
+	done, _ := state.Read(dir, "s1")
+	if done.Status != state.StatusDone {
+		t.Fatalf("a turn that ended is done: %+v", done)
+	}
+	// a minute idle at the prompt is not you seeing it
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"Notification","message":"Claude is waiting for your input"}`, "--status", state.StatusWaiting)
+	if r, _ := state.Read(dir, "s1"); r.Status != state.StatusDone || !r.UpdatedAt.Equal(done.UpdatedAt) {
+		t.Errorf("the idle notification must leave done as it was: %+v", r)
+	}
+	// the next prompt moves it on
+	feed(t, `{"session_id":"s1","cwd":"/p","hook_event_name":"UserPromptSubmit"}`)
+	if r, _ := state.Read(dir, "s1"); r.Status != state.StatusWorking {
+		t.Errorf("a new prompt is working: %+v", r)
+	}
+	// with nothing finished, the idle notification still says waiting
+	feed(t, `{"session_id":"s2","cwd":"/p","hook_event_name":"SessionStart","source":"startup"}`)
+	feed(t, `{"session_id":"s2","cwd":"/p","hook_event_name":"Notification"}`, "--status", state.StatusWaiting)
+	if r, _ := state.Read(dir, "s2"); r.Status != state.StatusWaiting {
+		t.Errorf("idle at a fresh prompt is waiting: %+v", r)
+	}
+}

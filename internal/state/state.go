@@ -18,9 +18,13 @@ import (
 const (
 	StatusNeedsYou = "needs-you"
 	StatusWorking  = "working"
-	StatusWaiting  = "waiting"
-	StatusError    = "error"
-	StatusUnknown  = "unknown"
+	// StatusDone is a turn that ended while nobody was looking: the session
+	// waits, and you have not seen it yet. The daemon turns it into
+	// StatusWaiting once you have.
+	StatusDone    = "done"
+	StatusWaiting = "waiting"
+	StatusError   = "error"
+	StatusUnknown = "unknown"
 )
 
 // Record is the last thing agentbar learned about a session from a hook.
@@ -113,6 +117,7 @@ func ReadAll(dir string) map[string]Record {
 
 // Delete removes the record for id. A missing record is not an error.
 func Delete(dir, id string) error {
+	_ = DeleteSeen(dir, id)
 	err := os.Remove(path(dir, id))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
