@@ -86,6 +86,11 @@ func Doctor() {
 		} else {
 			fmt.Println("note status line has no indicator; add #{E:@agentbar_pill} to status-right")
 		}
+		// a desktop notification travels through tmux to the terminal
+		if v, _ := r.Run("show-options", "-gqv", daemon.NotifyOption); v == "on" || v == "1" {
+			pt, _ := r.Run("show-options", "-gqv", "allow-passthrough")
+			check(pt == "on" || pt == "all", "notifications on; allow-passthrough "+pt, "add to tmux.conf: set -g allow-passthrough on")
+		}
 	} else {
 		fmt.Println("note not inside tmux (fine for install/doctor)")
 	}

@@ -49,9 +49,11 @@ type Pane struct {
 	WindowActive bool   // window is current in its session
 	Sidebar      bool   // pane option @agentbar is set
 	WindowWidth  int    // columns of the whole window
+	Zoomed       bool   // the window shows only its active pane
+	SessionID    string // "$3"; stable when the session is renamed
 }
 
-const paneFormat = "#{session_name}|#{window_id}|#{window_index}|#{pane_id}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{window_active}|#{@agentbar}|#{window_width}"
+const paneFormat = "#{session_name}|#{window_id}|#{window_index}|#{pane_id}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{window_active}|#{@agentbar}|#{window_width}|#{window_zoomed_flag}|#{session_id}"
 
 // ListPanes lists every pane on the server.
 func ListPanes(r Runner) ([]Pane, error) {
@@ -62,17 +64,51 @@ func ListPanes(r Runner) ([]Pane, error) {
 	var ps []Pane
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "|")
-		if len(f) != 10 {
+		if len(f) != 12 {
 			continue
 		}
 		ww, _ := strconv.Atoi(f[9])
 		ps = append(ps, Pane{
 			SessionName: f[0], WindowID: f[1], WindowIndex: f[2], PaneID: f[3], PaneIndex: f[4],
 			Command: f[5], Active: f[6] == "1", WindowActive: f[7] == "1", Sidebar: f[8] != "",
-			WindowWidth: ww,
+			WindowWidth: ww, Zoomed: f[10] == "1", SessionID: f[11],
 		})
 	}
 	return ps, nil
+}
+
+// Client is one terminal attached to the server.
+type Client struct {
+	Session string // the session it shows
+	Focused bool   // its terminal has the keyboard focus
+}
+
+// The flags lead: they never hold a "|", a session name can.
+const clientFormat = "#{client_flags}|#{client_session}"
+
+// ListClients lists every attached client. tmux counts a client as focused
+// until its terminal reports otherwise, so a terminal without focus
+// reporting always reads as focused.
+func ListClients(r Runner) ([]Client, error) {
+	out, err := r.Run("list-clients", "-F", clientFormat)
+	if err != nil {
+		return nil, err
+	}
+	var cs []Client
+	for _, line := range strings.Split(out, "\n") {
+		flags, sess, ok := strings.Cut(line, "|")
+		if !ok || sess == "" {
+			continue
+		}
+		c := Client{Session: sess}
+		for _, f := range strings.Split(flags, ",") {
+			if f == "focused" {
+				c.Focused = true
+			}
+		}
+		cs = append(cs, c)
+	}
+	return cs, nil
 }
 
 // FindSidebar returns the tagged sidebar pane, or nil.

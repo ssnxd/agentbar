@@ -469,7 +469,7 @@ type fakeRunner struct{ calls []string }
 func (f *fakeRunner) Run(args ...string) (string, error) {
 	f.calls = append(f.calls, strings.Join(args, " "))
 	if args[0] == "list-panes" {
-		return "work|@2|2|%1|2|claude|1|1||177\nwork|@1|1|%2|2|claude|1|0||177\n", nil
+		return "work|@2|2|%1|2|claude|1|1||177|0|$1\nwork|@1|1|%2|2|claude|1|0||177|0|$1\n", nil
 	}
 	return "", nil
 }
@@ -692,5 +692,74 @@ func TestHeaderCountAgreesWithItsNumber(t *testing.T) {
 		if out := ansi.Strip(Render(m)); !strings.Contains(out, "3 · 2 need you") || strings.Contains(out, "2 needs you") {
 			t.Errorf("%s header with two requests:\n%s", name, out)
 		}
+	}
+}
+
+func TestDoneCardAndCounts(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	ss[0].Status, ss[0].Detail = state.StatusWaiting, ""
+	ss[1].Status, ss[1].Detail, ss[1].LastActivity = state.StatusDone, "", now.Add(-4*time.Minute)
+	m := Model{width: 42, height: 24, now: now, sessions: ss, selected: "2"}
+	out := ansi.Strip(Render(m))
+	// the status, with how long ago it ended, and the count in the header
+	for _, want := range []string{"✓ done 4m", "3 · 1 done", "add rate limiter"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// a finished card is unread, not quiet: it keeps the strong tones a
+	// waiting card gives up
+	if quiet(state.StatusDone) {
+		t.Error("done must not sit back like waiting")
+	}
+	// a request outranks it in the header
+	ss[2].Status = state.StatusNeedsYou
+	out = ansi.Strip(Render(Model{width: 42, height: 24, now: now, sessions: ss, selected: "2"}))
+	if !strings.Contains(out, "3 · 1 needs you") || strings.Contains(out, "1 done ") {
+		t.Errorf("a request is what the header counts:\n%s", out)
+	}
+}
+
+func TestTabAndPopupGoToDoneWhenNothingIsAsked(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	ss := sample(now)
+	// 2 and 3 finished unseen, 3 first; 1 works
+	ss[0].Status = state.StatusWorking
+	ss[1].Status, ss[1].LastActivity = state.StatusDone, now.Add(-2*time.Minute)
+	ss[2].Status, ss[2].LastActivity = state.StatusDone, now.Add(-9*time.Minute)
+
+	q := Model{width: 60, height: 30, now: now, popup: true, opened: "%1"}
+	mm, _ := q.Update(snapshotMsg(daemon.Snapshot{Sessions: ss}))
+	m := mm.(Model)
+	if m.selected != "3" {
+		t.Errorf("with no request the popup opens on the oldest done, got %q", m.selected)
+	}
+	if out := ansi.Strip(Render(m)); !strings.Contains(out, "tab next done") || !strings.Contains(out, "3 · 2 done") {
+		t.Errorf("the hint and the count say done:\n%s", out)
+	}
+	m.nextHot()
+	if m.selected != "2" {
+		t.Errorf("tab goes to the next done, got %q", m.selected)
+	}
+	m.nextHot()
+	if m.selected != "3" {
+		t.Errorf("tab wraps among the done, got %q", m.selected)
+	}
+
+	// one request appears: it is where tab and the popup go
+	ss[0].Status = state.StatusNeedsYou
+	mm, _ = q.Update(snapshotMsg(daemon.Snapshot{Sessions: ss}))
+	m = mm.(Model)
+	if m.selected != "1" {
+		t.Errorf("a request comes before anything done, got %q", m.selected)
+	}
+	m.selected = "3"
+	m.nextHot()
+	if m.selected != "1" {
+		t.Errorf("tab skips done while something is asked, got %q", m.selected)
+	}
+	if out := ansi.Strip(Render(m)); !strings.Contains(out, "tab next request") {
+		t.Errorf("the hint says request again:\n%s", out)
 	}
 }

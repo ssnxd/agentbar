@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/ssnxd/agentbar/internal/session"
 	"github.com/ssnxd/agentbar/internal/state"
@@ -14,13 +15,21 @@ import (
 //	@agentbar_hot     number of sessions that need you
 //	@agentbar_status  "5 · 2 need you", "3 sessions", or "" when none
 //	@agentbar_pill    the styled, clickable indicator; see pill.go
+//	@agentbar_win     set to 1 on each window that holds a session needing you
+//	@agentbar_sess    set to 1 on each tmux session that holds one
+//
+// The last two are two names on purpose: a window with no option of its
+// own reads its session's, so one name would mark every window of a marked
+// session.
 //
 // and one the user sets: @agentbar-bell on rings the bell in a session's
 // pane the moment it needs you, so tmux flags its window.
 const (
-	HotOption    = "@agentbar_hot"
-	StatusOption = "@agentbar_status"
-	BellOption   = "@agentbar-bell"
+	HotOption     = "@agentbar_hot"
+	StatusOption  = "@agentbar_status"
+	WindowOption  = "@agentbar_win"
+	SessionOption = "@agentbar_sess"
+	BellOption    = "@agentbar-bell"
 )
 
 // Publisher pushes each snapshot's summary into tmux, touching tmux only
@@ -31,6 +40,7 @@ type Publisher struct {
 	lastPill   string
 	started    bool
 	prev       map[string]string // session id → status at the last publish
+	wins, sess map[string]bool   // window ids and session ids marked now
 }
 
 // Summary renders the status-line text for a snapshot.
@@ -72,6 +82,7 @@ func (p *Publisher) Publish(r tmuxctl.Runner, s Snapshot) {
 		refreshStatus(r)
 	}
 	p.lastHot, p.lastStatus, p.lastPill = hot, text, pill
+	p.rollup(r, s)
 
 	cur := make(map[string]string, len(s.Sessions))
 	var ring []string
@@ -93,8 +104,72 @@ func (p *Publisher) Publish(r tmuxctl.Runner, s Snapshot) {
 	}
 }
 
+// rollup marks the windows and tmux sessions that hold a session needing
+// you, so a status line can point at them, and unmarks the ones that no
+// longer do. Sessions are addressed by id: a mark must come off a session
+// that was renamed since.
+func (p *Publisher) rollup(r tmuxctl.Runner, s Snapshot) {
+	wins, sess := map[string]bool{}, map[string]bool{}
+	for _, ss := range s.Sessions {
+		if ss.Status != state.StatusNeedsYou {
+			continue
+		}
+		if pn, ok := s.Panes[ss.TmuxPaneID]; ok && pn.SessionID != "" {
+			wins[pn.WindowID], sess[pn.SessionID] = true, true
+		}
+	}
+	// A daemon that died left its marks behind. The first pass takes every
+	// window and session that does not need you as marked, so each one is
+	// set or cleared once.
+	if !p.started {
+		p.wins, p.sess = map[string]bool{}, map[string]bool{}
+		for _, pn := range s.Panes {
+			if pn.SessionID != "" {
+				p.wins[pn.WindowID], p.sess[pn.SessionID] = !wins[pn.WindowID], !sess[pn.SessionID]
+			}
+		}
+	}
+	changed := false
+	for _, w := range added(p.wins, wins) {
+		_, _ = r.Run("set-option", "-w", "-t", w, WindowOption, "1")
+		changed = true
+	}
+	for _, w := range added(wins, p.wins) {
+		_, _ = r.Run("set-option", "-wu", "-t", w, WindowOption)
+		changed = true
+	}
+	for _, id := range added(p.sess, sess) {
+		_, _ = r.Run("set-option", "-t", id, SessionOption, "1")
+		changed = true
+	}
+	for _, id := range added(sess, p.sess) {
+		_, _ = r.Run("set-option", "-u", "-t", id, SessionOption)
+		changed = true
+	}
+	p.wins, p.sess = wins, sess
+	if changed {
+		refreshStatus(r)
+	}
+}
+
+// added lists, sorted, what is in now and was not in old.
+func added(old, now map[string]bool) []string {
+	var out []string
+	for k := range now {
+		if !old[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // bell writes BEL to the pane's tty so tmux marks the window (monitor-bell).
-func bell(r tmuxctl.Runner, pane string) {
+func bell(r tmuxctl.Runner, pane string) { writePane(r, pane, []byte{'\a'}) }
+
+// writePane writes b to the pane's tty, where tmux reads it as output of
+// the pane.
+func writePane(r tmuxctl.Runner, pane string, b []byte) {
 	tty, err := r.Run("display-message", "-p", "-t", pane, "#{pane_tty}")
 	if err != nil || tty == "" {
 		return
@@ -104,7 +179,7 @@ func bell(r tmuxctl.Runner, pane string) {
 		return
 	}
 	defer f.Close()
-	_, _ = f.Write([]byte{'\a'})
+	_, _ = f.Write(b)
 }
 
 // Clear empties the published options, so a status line never shows the
@@ -113,6 +188,7 @@ func (p *Publisher) Clear(r tmuxctl.Runner) {
 	_, _ = r.Run("set-option", "-g", HotOption, "0")
 	_, _ = r.Run("set-option", "-g", StatusOption, "")
 	_, _ = r.Run("set-option", "-g", PillOption, "")
+	p.rollup(r, Snapshot{})
 	refreshStatus(r)
 	*p = Publisher{}
 }

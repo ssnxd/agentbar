@@ -186,13 +186,15 @@ func (m *Model) ensureSelection() {
 	}
 }
 
-// oldestHot puts the cursor on the session that has needed you longest.
-// Reports whether there is one.
+// oldestHot puts the cursor on the session that has needed you longest;
+// with no request, on the one that has been done, unseen, longest. Reports
+// whether there is one.
 func (m *Model) oldestHot() bool {
+	want := m.wanted()
 	found := false
 	var oldest time.Time
 	for _, s := range m.ordered() {
-		if s.Status != state.StatusNeedsYou {
+		if s.Status != want {
 			continue
 		}
 		if !found || s.LastActivity.Before(oldest) {
@@ -200,6 +202,17 @@ func (m *Model) oldestHot() bool {
 		}
 	}
 	return found
+}
+
+// wanted is the status tab and the popup go to: a request while there is
+// one, else a session that finished unseen. A request always comes first.
+func (m Model) wanted() string {
+	for _, s := range m.ordered() {
+		if s.Status == state.StatusNeedsYou {
+			return state.StatusNeedsYou
+		}
+	}
+	return state.StatusDone
 }
 
 // otherHot reports whether a session besides id needs you.
@@ -213,8 +226,8 @@ func (m Model) otherHot(id string) bool {
 }
 
 // home puts the cursor on the session running in this viewer's window; a
-// popup opens on the oldest request instead, when there is one. Reports
-// whether it found a place.
+// popup opens on the oldest request instead, or on the oldest session done
+// unseen, when there is one. Reports whether it found a place.
 func (m *Model) home() bool {
 	if m.popup && m.oldestHot() {
 		return true
@@ -253,8 +266,10 @@ func (m *Model) move(delta int) {
 	m.selected = rows[idx].ID
 }
 
-// nextHot selects the next needs-you row after the current one, wrapping.
+// nextHot selects the next row of the wanted status after the current one,
+// wrapping.
 func (m *Model) nextHot() {
+	want := m.wanted()
 	rows := m.ordered()
 	start := 0
 	for i, s := range rows {
@@ -265,7 +280,7 @@ func (m *Model) nextHot() {
 	}
 	for k := 0; k < len(rows); k++ {
 		s := rows[(start+k)%len(rows)]
-		if s.Status == state.StatusNeedsYou {
+		if s.Status == want {
 			m.selected = s.ID
 			return
 		}
