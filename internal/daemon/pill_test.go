@@ -62,6 +62,16 @@ func TestPill(t *testing.T) {
 	if body := Pill(snap(hot(time.Hour))); strings.Count(body[strings.Index(body, "#{?#{e|"):strings.Index(body, "● 1}")], ",") != 3 {
 		t.Errorf("stray comma in the conditional: %q", body)
 	}
+	// done unseen joins the soft pill, after an error and before the rest;
+	// it never fills the pill
+	doneS := session.Session{Status: state.StatusDone}
+	p = Pill(snap(work, doneS, doneS, wait))
+	if !strings.Contains(p, "#[fg=#a6e3a1]✓ 2 #[fg=#89b4fa]◐ 1 #[fg=#9399b2]○ 1") || strings.Contains(p, "bg=#fab387") {
+		t.Errorf("done in the soft pill: %q", p)
+	}
+	if p = Pill(snap(hot(time.Minute), doneS)); strings.Contains(p, "✓") {
+		t.Errorf("a request is the only thing the pill says: %q", p)
+	}
 }
 
 func TestStatusReads(t *testing.T) {

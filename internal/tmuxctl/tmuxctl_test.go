@@ -29,7 +29,7 @@ func (f *fake) Run(args ...string) (string, error) {
 
 func (f *fake) joined() string { return strings.Join(f.calls, "\n") }
 
-const panes = "work|@1|2|%5|1|zsh|1|1||177\nwork|@1|2|%6|2|agentbar|0|1|1|177\nwork|@2|3|%7|1|claude|1|0||177\ndev|@3|1|%8|1|2.1.263|1|1||177\n"
+const panes = "work|@1|2|%5|1|zsh|1|1||177|0|$1\nwork|@1|2|%6|2|agentbar|0|1|1|177|0|$1\nwork|@2|3|%7|1|claude|1|0||177|0|$1\ndev|@3|1|%8|1|2.1.263|1|1||177|0|$1\n"
 
 func TestListPanesParsesSidebarFlag(t *testing.T) {
 	ps, err := ListPanes(&fake{panes: panes})
@@ -86,5 +86,31 @@ func TestCurrent(t *testing.T) {
 	p, w, err := Current(f, "%5")
 	if err != nil || p != "%5" || w != "@1" || !strings.Contains(f.joined(), "display-message -p -t %5") {
 		t.Errorf("%q %q %v\n%s", p, w, err, f.joined())
+	}
+}
+
+func TestListPanesReadsZoomAndSessionID(t *testing.T) {
+	f := &fake{panes: "work|@1|2|%5|1|zsh|1|1||177|1|$4\nwork|@2|3|%7|1|claude|1|0||177|0|$4\n"}
+	ps, err := ListPanes(f)
+	if err != nil || len(ps) != 2 {
+		t.Fatalf("got %v, %v", ps, err)
+	}
+	if !ps[0].Zoomed || ps[1].Zoomed || ps[0].SessionID != "$4" {
+		t.Errorf("zoom and session id: %+v", ps)
+	}
+}
+
+type clientFake struct{ out string }
+
+func (c clientFake) Run(args ...string) (string, error) { return c.out, nil }
+
+func TestListClients(t *testing.T) {
+	// a session name may hold the separator; the flags never do
+	cs, err := ListClients(clientFake{"attached,focused,UTF-8|work\nattached,UTF-8|a|b\n\n"})
+	if err != nil || len(cs) != 2 {
+		t.Fatalf("got %v, %v", cs, err)
+	}
+	if !cs[0].Focused || cs[0].Session != "work" || cs[1].Focused || cs[1].Session != "a|b" {
+		t.Errorf("clients: %+v", cs)
 	}
 }

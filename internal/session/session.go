@@ -40,6 +40,8 @@ type Session struct {
 	Status string // state.Status*
 	Detail string // permission detail, error message, ...
 	Source string // Source*
+	// StatusSince is when a hook set the status; zero without hook data.
+	StatusSince time.Time
 
 	StartedAt    time.Time
 	LastActivity time.Time
@@ -113,6 +115,9 @@ func Build(d Deps) []Session {
 			TmuxSession: e.TmuxSession, TmuxWindowID: e.TmuxWindowID, TmuxPaneID: e.TmuxPaneID,
 		}
 		s.Status, s.Detail, s.Source = Resolve(e, rec, has, ti, d.Now)
+		if s.Source == SourceHook {
+			s.StatusSince = rec.UpdatedAt
+		}
 		switch {
 		case ti.Title != "":
 			s.Title = ti.Title

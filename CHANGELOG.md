@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `✓ done`: a session that finishes while you are not looking stays done,
+  in green, until its pane has been on your screen for a second. The
+  indicator counts it (`✓ 2 ◐ 5 ○ 1`), the picker opens on it when
+  nothing is asked, and `tab` goes through the done sessions then.
+- `@agentbar_win` and `@agentbar_sess` mark the windows and tmux sessions
+  that hold a session needing you, for your own status line.
+- `@agentbar-notify on`: a sound when a session needs you or is done, and
+  a desktop notification through the terminal while you are in another
+  app. Nothing when its pane is on your screen. `@agentbar-sound off`
+  drops the sound.
+- `agentbar doctor` checks `allow-passthrough` when notifications are on.
+
 ## 0.1.0 (2026-10-01)
 
 The project is now agentbar. It plugs Claude into tmux so you know when

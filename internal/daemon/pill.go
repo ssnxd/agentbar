@@ -15,7 +15,8 @@ import (
 //
 //	● 1 needs you 12m   filled: a session needs you, with the age of the
 //	                    oldest request; "● 1" on clients under 90 columns
-//	◐ 2 ○ 1             soft: sessions run or wait, nothing is asked of you
+//	✓ 1 ◐ 2 ○ 1         soft: sessions finished unseen, run or wait; nothing
+//	                    is asked of you
 //	(empty)             no sessions
 //
 // The whole pill is a click range named "agentbar". Two options the user
@@ -38,12 +39,13 @@ const (
 	pOverlay2 = "#9399b2"
 	pPeach    = "#fab387"
 	pBlue     = "#89b4fa"
+	pGreen    = "#a6e3a1"
 	pRed      = "#f38ba8"
 )
 
 // Pill renders the indicator for a snapshot; empty with no sessions.
 func Pill(s Snapshot) string {
-	var hot, working, waiting, failed int
+	var hot, done, working, waiting, failed int
 	var oldest time.Time
 	for _, ss := range s.Sessions {
 		switch ss.Status {
@@ -52,6 +54,8 @@ func Pill(s Snapshot) string {
 			if !ss.LastActivity.IsZero() && (oldest.IsZero() || ss.LastActivity.Before(oldest)) {
 				oldest = ss.LastActivity
 			}
+		case state.StatusDone:
+			done++
 		case state.StatusWorking:
 			working++
 		case state.StatusWaiting:
@@ -69,7 +73,7 @@ func Pill(s Snapshot) string {
 		}
 		body := fmt.Sprintf("#{?#{e|>=:#{client_width},%d},%s,%s}", pillWide, long, short)
 		return pill(pPeach, "fg="+pCrust+" bold", body)
-	case working+waiting+failed > 0:
+	case done+working+waiting+failed > 0:
 		var segs []string
 		seg := func(n int, fg, icon string) {
 			if n > 0 {
@@ -77,6 +81,7 @@ func Pill(s Snapshot) string {
 			}
 		}
 		seg(failed, pRed, "✗")
+		seg(done, pGreen, "✓")
 		seg(working, pBlue, "◐")
 		seg(waiting, pOverlay2, "○")
 		return pill(pSurface0, "fg="+pOverlay2, strings.Join(segs, " "))

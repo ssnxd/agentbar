@@ -60,6 +60,7 @@ func Build(r tmuxctl.Runner) Snapshot {
 	agents := state.ReadAgents(paths.StateDir())
 	state.Sweep(paths.StateDir(), live, sweepAge, now)
 	state.SweepAgents(paths.StateDir(), live, sweepAge, now)
+	state.SweepSeen(paths.StateDir(), live)
 
 	panes := map[string]tmuxctl.Pane{}
 	ps, perr := tmuxctl.ListPanes(r)

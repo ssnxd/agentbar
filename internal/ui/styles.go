@@ -32,6 +32,7 @@ var (
 	sTitle  = lipgloss.NewStyle().Bold(true).Foreground(cMauve)
 	sCount  = lipgloss.NewStyle().Foreground(cSubtext0)
 	sHot    = lipgloss.NewStyle().Bold(true).Foreground(cPeach)
+	sDone   = lipgloss.NewStyle().Foreground(cGreen)
 	sGroup  = lipgloss.NewStyle().Bold(true).Foreground(cSky)
 	sKey    = lipgloss.NewStyle().Bold(true).Foreground(cSky)
 	sKeyLbl = lipgloss.NewStyle().Foreground(cOverlay1)
@@ -64,6 +65,9 @@ type statusLook struct {
 var statusLooks = map[string]statusLook{
 	state.StatusNeedsYou: {"●", "needs you", lipgloss.NewStyle().Bold(true).Foreground(cPeach)},
 	state.StatusWorking:  {"◐", "working", lipgloss.NewStyle().Foreground(cBlue)},
+	// done is an outcome, like error, so it takes a mark, not a circle: the
+	// circles are the live states. It is not bold: it does not ask.
+	state.StatusDone: {"✓", "done", sDone},
 	// waiting is quiet on purpose: idle sessions must not compete with
 	// the ones that need you.
 	state.StatusWaiting: {"○", "waiting", lipgloss.NewStyle().Foreground(cSubtext0)},
@@ -88,12 +92,14 @@ func rank(status string) int {
 		return 0
 	case state.StatusError:
 		return 1
-	case state.StatusWaiting:
+	case state.StatusDone:
 		return 2
-	case state.StatusWorking:
+	case state.StatusWaiting:
 		return 3
-	default:
+	case state.StatusWorking:
 		return 4
+	default:
+		return 5
 	}
 }
 

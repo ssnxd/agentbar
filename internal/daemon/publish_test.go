@@ -8,6 +8,7 @@ import (
 
 	"github.com/ssnxd/agentbar/internal/session"
 	"github.com/ssnxd/agentbar/internal/state"
+	"github.com/ssnxd/agentbar/internal/tmuxctl"
 )
 
 type fakeTmux struct {
@@ -117,5 +118,61 @@ func TestPublishStatusOneRequest(t *testing.T) {
 	))
 	if want := "set-option -g @agentbar_status 2 · 1 needs you"; !strings.Contains(f.joined(), want) {
 		t.Errorf("missing %q in\n%s", want, f.joined())
+	}
+}
+
+func TestPublishMarksWindowsAndSessionsThatNeedYou(t *testing.T) {
+	panes := map[string]tmuxctl.Pane{
+		"%1": {SessionName: "work", SessionID: "$1", WindowID: "@1", PaneID: "%1"},
+		"%2": {SessionName: "work", SessionID: "$1", WindowID: "@2", PaneID: "%2"},
+		"%3": {SessionName: "side", SessionID: "$2", WindowID: "@3", PaneID: "%3"},
+	}
+	snap := func(a, b, c string) Snapshot {
+		return Snapshot{Panes: panes, Sessions: []session.Session{
+			{ID: "a", Status: a, InTmux: true, TmuxPaneID: "%1"},
+			{ID: "b", Status: b, InTmux: true, TmuxPaneID: "%2"},
+			{ID: "c", Status: c, InTmux: true, TmuxPaneID: "%3"},
+		}}
+	}
+	f := &fakeTmux{}
+	p := &Publisher{}
+	// the first pass also cleans what a dead daemon left: every window and
+	// session that does not need you is unmarked
+	p.Publish(f, snap(state.StatusWorking, state.StatusNeedsYou, state.StatusDone))
+	j := f.joined()
+	for _, want := range []string{
+		"set-option -w -t @2 @agentbar_win 1", "set-option -t $1 @agentbar_sess 1",
+		"set-option -wu -t @1 @agentbar_win", "set-option -wu -t @3 @agentbar_win", "set-option -u -t $2 @agentbar_sess",
+	} {
+		if !strings.Contains(j, want) {
+			t.Errorf("missing %q in\n%s", want, j)
+		}
+	}
+	if strings.Contains(j, "@agentbar_win 1\nset-option -w -t @3") || strings.Contains(j, "-t @3 @agentbar_win 1") {
+		t.Errorf("done is not a mark on a window:\n%s", j)
+	}
+	// nothing changed: tmux is left alone
+	n := len(f.calls)
+	p.Publish(f, snap(state.StatusWorking, state.StatusNeedsYou, state.StatusDone))
+	if len(f.calls) != n {
+		t.Errorf("unchanged marks must not touch tmux again:\n%s", strings.Join(f.calls[n:], "\n"))
+	}
+	// answered there, asked elsewhere
+	f.calls = nil
+	p.Publish(f, snap(state.StatusWorking, state.StatusWorking, state.StatusNeedsYou))
+	j = f.joined()
+	for _, want := range []string{
+		"set-option -wu -t @2 @agentbar_win", "set-option -u -t $1 @agentbar_sess",
+		"set-option -w -t @3 @agentbar_win 1", "set-option -t $2 @agentbar_sess 1",
+	} {
+		if !strings.Contains(j, want) {
+			t.Errorf("missing %q in\n%s", want, j)
+		}
+	}
+	// a daemon that stops takes its marks with it
+	f.calls = nil
+	p.Clear(f)
+	if j = f.joined(); !strings.Contains(j, "set-option -wu -t @3 @agentbar_win") || !strings.Contains(j, "set-option -u -t $2 @agentbar_sess") {
+		t.Errorf("Clear should unmark:\n%s", j)
 	}
 }

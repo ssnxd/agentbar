@@ -272,18 +272,15 @@ const (
 // pickerHead is the top of the popup: the search line with the match
 // count on the right, and a rule between it and the list.
 func (m Model) pickerHead() []string {
-	n, hot := len(m.visible()), 0
-	for _, s := range m.visible() {
-		if s.Status == state.StatusNeedsYou {
-			hot++
-		}
-	}
+	n, hot, done := m.counts()
 	var right string
 	switch {
 	case m.filter != "":
 		right = sCount.Render(fmt.Sprintf("%d/%d", n, len(m.sessions)))
 	case hot > 0:
 		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(session.NeedYou(hot))
+	case done > 0:
+		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sDone.Render(fmt.Sprintf("%d done", done))
 	case n > 0:
 		right = sCount.Render(fmt.Sprint(n))
 	}
@@ -311,14 +308,23 @@ func (m Model) pickerHead() []string {
 	}
 }
 
-func (m Model) header() string {
-	n := len(m.visible())
-	hot := 0
+// counts are the visible sessions: all of them, the ones that need you,
+// and the ones that finished unseen.
+func (m Model) counts() (n, hot, done int) {
 	for _, s := range m.visible() {
-		if s.Status == state.StatusNeedsYou {
+		n++
+		switch s.Status {
+		case state.StatusNeedsYou:
 			hot++
+		case state.StatusDone:
+			done++
 		}
 	}
+	return n, hot, done
+}
+
+func (m Model) header() string {
+	n, hot, done := m.counts()
 	left := sTitle.Render("  claude ")
 	var right string
 	switch {
@@ -326,6 +332,8 @@ func (m Model) header() string {
 		right = sCount.Render("no sessions ")
 	case hot > 0:
 		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sHot.Render(session.NeedYou(hot)) + " "
+	case done > 0:
+		right = sCount.Render(fmt.Sprintf("%d · ", n)) + sDone.Render(fmt.Sprintf("%d done", done)) + " "
 	case n == 1:
 		right = sCount.Render("1 session ")
 	default:
@@ -456,7 +464,11 @@ func (m Model) hints() []hint {
 		if ok && cur.Status == state.StatusNeedsYou {
 			hs = append(hs, hint{"^y", "accept"})
 		}
-		return append(hs, hint{"^x", "kill"}, hint{"tab", "next request"}, hint{"esc", "close"})
+		next := "next request"
+		if _, hot, done := m.counts(); hot == 0 && done > 0 {
+			next = "next done"
+		}
+		return append(hs, hint{"^x", "kill"}, hint{"tab", next}, hint{"esc", "close"})
 	}
 	hs := []hint{{"enter", "jump"}}
 	if ok && cur.Status == state.StatusNeedsYou {
@@ -499,7 +511,7 @@ func PopupHeight(ss []session.Session, w int) int {
 var helpRows = []hint{
 	{"j / k", "move"},
 	{"enter", "jump to pane"},
-	{"tab", "next needs-you"},
+	{"tab", "next request, else done"},
 	{"y", "accept permission prompt"},
 	{"x", "kill session (asks y/n)"},
 	{"/", "filter; esc clears"},

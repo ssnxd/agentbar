@@ -7,11 +7,11 @@ import (
 
 // windows: @1 (work) has zsh %5 + sidebar %6; @2 (work) has claude %7 only;
 // @3 (dev, other session) has %8; @4 is a narrow window (60 cols).
-const panes2 = "work|@1|2|%5|1|zsh|1|1||177\n" +
-	"work|@1|2|%6|2|agentbar|0|1|1|177\n" +
-	"work|@2|3|%7|1|claude|1|0||177\n" +
-	"dev|@3|1|%8|1|2.1.263|1|1||177\n" +
-	"dev|@4|2|%9|1|zsh|1|0||60\n"
+const panes2 = "work|@1|2|%5|1|zsh|1|1||177|0|$1\n" +
+	"work|@1|2|%6|2|agentbar|0|1|1|177|0|$1\n" +
+	"work|@2|3|%7|1|claude|1|0||177|0|$1\n" +
+	"dev|@3|1|%8|1|2.1.263|1|1||177|0|$1\n" +
+	"dev|@4|2|%9|1|zsh|1|0||60|0|$1\n"
 
 func TestOpenAllSkipsExistingAndNarrow(t *testing.T) {
 	f := &fake{panes: panes2, opts: map[string]string{"window-active-style": "bg=#1e1e2e"}}
@@ -73,7 +73,7 @@ func TestSweepEmpty(t *testing.T) {
 		t.Error("must not kill while a main pane remains")
 	}
 	// @1 is left with only its sidebar; @2 is fine
-	f = &fake{panes: "work|@1|2|%6|2|agentbar|1|1|1|177\nwork|@2|3|%7|1|claude|1|0||177\nwork|@2|3|%8|2|agentbar|0|0|1|177\n"}
+	f = &fake{panes: "work|@1|2|%6|2|agentbar|1|1|1|177|0|$1\nwork|@2|3|%7|1|claude|1|0||177|0|$1\nwork|@2|3|%8|2|agentbar|0|0|1|177|0|$1\n"}
 	n, _ = SweepEmpty(f)
 	if n != 1 || !strings.Contains(f.joined(), "kill-pane -t %6") || strings.Contains(f.joined(), "kill-pane -t %8") {
 		t.Errorf("n=%d\n%s", n, f.joined())

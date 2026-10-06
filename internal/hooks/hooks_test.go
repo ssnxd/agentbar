@@ -24,7 +24,7 @@ func TestMapTable(t *testing.T) {
 		{event: "PermissionRequest", tool: "Bash", input: map[string]any{"command": "git push origin main"}, wantStatus: state.StatusNeedsYou, wantDetail: "Bash git push origin main"},
 		{event: "Notification", override: state.StatusNeedsYou, wantStatus: state.StatusNeedsYou},
 		{event: "Notification", override: state.StatusWaiting, wantStatus: state.StatusWaiting},
-		{event: "Stop", wantStatus: state.StatusWaiting},
+		{event: "Stop", wantStatus: state.StatusDone},
 		{event: "StopFailure", wantStatus: state.StatusError},
 		{event: "SessionEnd", wantDelete: true},
 	}

@@ -129,3 +129,36 @@ func TestSweepAgents(t *testing.T) {
 		t.Errorf("got %+v", all)
 	}
 }
+
+func TestSeenMarks(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 10, 6, 12, 0, 0, 123, time.UTC)
+	if len(ReadSeen(dir)) != 0 {
+		t.Fatal("no marks before any is written")
+	}
+	if err := MarkSeen(dir, "s1", at); err != nil {
+		t.Fatal(err)
+	}
+	_ = MarkSeen(dir, "s2", at)
+	if got := ReadSeen(dir)["s1"]; !got.Equal(at) {
+		t.Errorf("mark read back as %v, want %v", got, at)
+	}
+	// a mark is not a session record
+	if len(ReadAll(dir)) != 0 {
+		t.Errorf("seen marks must not read as records: %v", ReadAll(dir))
+	}
+	// a session that ends takes its mark with it
+	_ = Write(dir, Record{SessionID: "s1", Status: StatusDone, UpdatedAt: at})
+	if err := Delete(dir, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadSeen(dir)["s1"]; ok {
+		t.Error("Delete should remove the seen mark")
+	}
+	if n := SweepSeen(dir, map[string]bool{"other": true}); n != 1 {
+		t.Errorf("swept %d marks of dead sessions, want 1", n)
+	}
+	if err := DeleteSeen(dir, "never"); err != nil {
+		t.Errorf("a missing mark is not an error: %v", err)
+	}
+}
